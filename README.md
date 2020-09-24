@@ -1,27 +1,31 @@
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/412fa22ba5f8452794584ed9819f149b)](https://www.codacy.com?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=Seagate/s3bench&amp;utm_campaign=Badge_Grade)
-
 # Initial
 Cloned from
 ```
-https://github.com/igneous-systems/s3bench.git
+git clone -b data_verification_tool https://github.com/Seagate/s3bench/
 ```
 
 # S3 Bench
-This tool offers the ability to run very basic throughput benchmarking against
+This tool offers the ability to run the data verification against
 an S3-compatible endpoint. It does a series of put operations followed by a
-series of get operations and displays the corresponding statistics. The tool
+series of get operations and displays the corresponding error statistics. The tool
 uses the AWS Go SDK.
 
 ## Requirements
 * Go
 
 ## Installation
-Run the following command to build the binary.
+In case golang is not installed.
 
 ```
-go get github.com/igneous-systems/s3bench
+wget https://golang.org/dl/go1.15.2.linux-amd64.tar.gz
+tar -C /usr/local -xzf go1.15.2.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
 ```
-The binary will be placed under $GOPATH/bin/s3bench.
+Check go version as : 
+```
+go version
+```
+Expected output : go version go1.15.2 linux/amd64
 
 ## Usage
 The s3bench command is self-describing. In order to see all the available options
@@ -29,26 +33,12 @@ just run s3bench -help.
 
 ### Example input
 The following will run a benchmark from 2 concurrent clients, which in
-aggregate will put a total of 10 unique new objects. Each object will be
-exactly 1024 bytes. The objects will be placed in a bucket named loadgen.
-The S3 endpoint will be ran against http://endpoint1:80 and
-http://endpoint2:80. Object name will be prefixed with loadgen.
+aggregate will put a total of 3 unique new objects. Each object will be
+exactly 1024 Kbytes. The objects will be placed in a bucket named loadgen.
+The S3 endpoint will be ran against http://s3.seagate.com . Object name will be prefixed with loadgen_test.
 
 ```
-./s3bench -accessKey=KEY -accessSecret=SECRET -bucket=loadgen -endpoint=http://endpoint1:80,http://endpoint2:80 -numClients=2 -numSamples=10 -objectNamePrefix=loadgen -objectSize=1024
-```
-
-#### Note on regions & endpoints
-By default, the region used will be `igneous-test` , a fictitious region which
-is suitable for using with the Igneous Data Service.  However, you can elect to
-use this tool with Amazon S3, in which case you will need to specify the proper region.
-
-It is also important when using Amazon S3 that you specify the proper endpoint, which
-will generally be `http://s3-regionName.amazonaws.com:80`. EG: if the bucket which you are
-testing is in Oregon, you would specify:
-
-```
--endpoint http://s3-us-west-2.amazonaws.com:80 -region us-west-2
+./s3bench -accessKey <access_key> -accessSecret <access_secret> -bucket <bucketname> -endpoint http://s3.seagate.com -numClients 2 -numSamples 3 -objectSize 1Mb -skipCleanup -verbose
 ```
 
 For more information on this, please refer to [AmazonS3 documentation.](https://aws.amazon.com/documentation/s3/)
@@ -61,82 +51,77 @@ current average throughput. At the end of the run summaries of the put and get
 operations will be displayed.
 
 ```
-Test parameters
-endpoint(s):      [http://endpoint1:80 http://endpoint2:80]
-bucket:           loadgen
-objectNamePrefix: loadgen
-objectSize:       0.0010 MB
-numClients:       2
-numSamples:       10
+Generating in-memory sample data...
+Data hashes of objects
 
+A7U7ME6IF6UILNI24K6RFTETEZOBZP4YSRMRVTDLONC5S766OHUY74EG5W76QIKCP7KVI6FND2PNQ3TFS25W634AL436ZC2G4ZGVL6Q
+P4GRBEVLF32AZ3OELPPHDRP5XDYWNPNZQ5NTHQM2X32AYQO6YA2DHYDYT5E6FSDBAL3WASZJQ77GS2LXB7U5R6PAZ6MQT5GZMEYFNII
+CXTYGG3X73MGNQ7DPFX2BHDRLX6TST47YFR5HR3B2QIJ44RAO4BARWYS7BETQEQEVBBL3EFLJVLBX6R2N6WSKHDXZHCKK4SVBBMKT6I
 
-Generating in-memory sample data... Done (95.958µs)
-
+Done (29.46795ms)
 Running Write test...
-Write operation completed in 0.37s (1/10) - 0.00MB/s
-Write operation completed in 0.39s (2/10) - 0.01MB/s
-Write operation completed in 0.34s (3/10) - 0.00MB/s
-Write operation completed in 0.72s (4/10) - 0.00MB/s
-Write operation completed in 0.53s (5/10) - 0.00MB/s
-Write operation completed in 0.38s (6/10) - 0.00MB/s
-Write operation completed in 0.54s (7/10) - 0.00MB/s
-Write operation completed in 0.59s (8/10) - 0.00MB/s
-Write operation completed in 0.79s (9/10) - 0.00MB/s
-Write operation completed in 0.60s (10/10) - 0.00MB/s
+Creating hash file ...
+Creating hash file ...
+operation Write(1) completed in 0.21s|%!s(<nil>)
+Creating hash file ...
+operation Write(2) completed in 0.24s|%!s(<nil>)
+operation Write(3) completed in 0.27s|%!s(<nil>)
+ Version:                    -
+ Parameters:
+    numClients:                 1
+    numSamples:                 3
+    objectSize (MB):            1.000
+    sampleReads:                1
+    clientDelay:                1
+    readObj:                    false
+    headObj:                    false
+    putObjTag:                  false
+    getObjTag:                  false
+    bucket:                     pranavbucket
+    deleteAtOnce:               1000
+    endpoints:
+       http://s3.seagate.com
+    jsonOutput:                 false
+    numTags:                    10
+    objectNamePrefix:           loadgen_test
+    reportFormat:               Version;Parameters;Parameters:numClients;Parameters:numSamples;Parameters:objectSize (MB);Parameters:sampleReads;Parameters:clientDelay;Parameters:readObj;Parameters:headObj;Parameters:putObjTag;Parameters:getObjTag;Tests:Operation;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;
+    skipRead:                   true
+    skipWrite:                  false
+    tagNamePrefix:              tag_name_
+    tagValPrefix:               tag_val_
+    validate:                   false
+    verbose:                    true
+ Tests:
+    Operation:                  Write
+    Total Requests Count:       3
+    Errors Count:               0
+    Total Throughput (MB/s):    4.132
+    Duration Max:               0.268
+    Duration Avg:               0.242
+    Duration Min:               0.214
+    Ttfb Max:                   0.268
+    Ttfb Avg:                   0.242
+    Ttfb Min:                   0.214
+    Duration 90th-ile:          0.268
+    Duration 99th-ile:          0.268
+    Errors:                     []
+    Total Duration (s):         0.726
+    Total Transferred (MB):     3.000
+    Ttfb 90th-ile:              0.268
+    Ttfb 99th-ile:              0.268
 
-Running Read test...
-Read operation completed in 0.00s (1/10) - 0.51MB/s
-Read operation completed in 0.00s (2/10) - 1.00MB/s
-Read operation completed in 0.00s (3/10) - 0.85MB/s
-Read operation completed in 0.00s (4/10) - 1.13MB/s
-Read operation completed in 0.00s (5/10) - 1.02MB/s
-Read operation completed in 0.00s (6/10) - 1.15MB/s
-Read operation completed in 0.00s (7/10) - 1.12MB/s
-Read operation completed in 0.00s (8/10) - 1.26MB/s
-Read operation completed in 0.00s (9/10) - 1.20MB/s
-Read operation completed in 0.00s (10/10) - 1.28MB/s
+```
+###To run the wrapper script
 
-Test parameters
-endpoint(s):      [http://endpoint1:80 http://endpoint2:80]
-bucket:           loadgen
-objectNamePrefix: loadgen
-objectSize:       0.0010 MB
-numClients:       2
-numSamples:       10
-
-Results Summary for Write Operation(s)
-Total Transferred: 0.010 MB
-Total Throughput:  0.00 MB/s
-Total Duration:    2.684 s
-Number of Errors:  0
-------------------------------------
-Put times Max:       0.791 s
-Put times 99th %ile: 0.791 s
-Put times 90th %ile: 0.791 s
-Put times 75th %ile: 0.601 s
-Put times 50th %ile: 0.543 s
-Put times 25th %ile: 0.385 s
-Put times Min:       0.336 s
-
-
-Results Summary for Read Operation(s)
-Total Transferred: 0.010 MB
-Total Throughput:  1.28 MB/s
-Total Duration:    0.008 s
-Number of Errors:  0
-------------------------------------
-Put times Max:       0.002 s
-Put times 99th %ile: 0.002 s
-Put times 90th %ile: 0.002 s
-Put times 75th %ile: 0.002 s
-Put times 50th %ile: 0.001 s
-Put times 25th %ile: 0.001 s
-Put times Min:       0.001 s
+```
+./data_verify.sh -K <access_key> -S <access_secret> -b <bucketname> -w <workload_type> -i <no. of iterations> -s <no. of samples> -c <no. of clients>
 ```
 
-##### Head-object
-It is possible to send head-object requests instead of get-object.
-For this purpose one sould use *-metaData* flag
+### Example output
+
 ```
-./s3bench -accessKey=KEY -accessSecret=SECRET -bucket=loadgen -endpoint=http://endpoint1:80 -numClients=2 -numSamples=10 -objectNamePrefix=loadgen -objectSize=1024 -metaData
+Log file for this run : /var/log/last_run_s3bench_log.log !
+
+Log file : /var/log/s3bench_log.log !
+
 ```
