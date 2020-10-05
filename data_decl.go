@@ -8,12 +8,20 @@ var (
 )
 
 const (
-	opRead  = "Read"
-	opWrite = "Write"
-	opHeadObj = "HeadObj"
+	opRead      = "Read"
+	opWrite     = "Write"
+	opHeadObj   = "HeadObj"
 	opGetObjTag = "GetObjTag"
 	opPutObjTag = "PutObjTag"
-	opValidate = "Validate"
+	opValidate  = "Validate"
+)
+
+const (
+	maxPartSize        = int64(100 * 1024) //int64(5 * 1024 * 1024) max part size is 100kb
+	maxRetries         = 3
+	awsAccessKeyID     = "yD-Xf1u4Qd2ww_o2zW1l7Q"
+	awsSecretAccessKey = "6Tub8JEOoWZhfgjfTWWg5h7KEt67+CZdPjgLBOpb"
+	awsBucketRegion    = "US"
 )
 
 type Req struct {

@@ -4,19 +4,21 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha512"
-	"hash"
 	"flag"
 	"fmt"
+	"hash"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"sort"
 	"strings"
 	"time"
-	"log"
+
 	// "bufio"
 	// "strconv"
 	mathrand "math/rand"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -29,6 +31,8 @@ var data_hash [sha512.Size]byte
 var data_hash_array [100]string
 var bufferBytesMap map[uint][]byte
 
+// true if created
+// false if existed
 func (params *Params) prepareBucket(cfg *aws.Config) bool {
 	cfg.Endpoint = aws.String(params.endpoints[0])
 	svc := s3.New(session.New(), cfg)
@@ -49,7 +53,7 @@ func (params *Params) prepareBucket(cfg *aws.Config) bool {
 
 func CreateHashFile(bucketName string, objectName string, hashValue string) {
 	if _, err := os.Stat("/tmp/" + bucketName + "/"); os.IsNotExist(err) {
-		err := os.Mkdir("/tmp/" + bucketName + "/", 0755)	
+		err := os.Mkdir("/tmp/"+bucketName+"/", 0755)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -64,8 +68,8 @@ func CreateHashFile(bucketName string, objectName string, hashValue string) {
 	}
 }
 
-func compareHash(bucketName string, objectName string, hashVal string) bool{
-	hashFile, err := os.OpenFile("/tmp/" + bucketName + "/" + objectName , os.O_RDWR, 0600)
+func compareHash(bucketName string, objectName string, hashVal string) bool {
+	hashFile, err := os.OpenFile("/tmp/"+bucketName+"/"+objectName, os.O_RDWR, 0600)
 	if err != nil {
 		panic(err)
 	}
@@ -109,6 +113,12 @@ func main() {
 	skipWrite := flag.Bool("skipWrite", false, "do not run Write test")
 	skipRead := flag.Bool("skipRead", false, "do not run Read test")
 
+	// cfg := &aws.Config{
+	// 	Credentials:      credentials.NewStaticCredentials(*accessKey, *accessSecret, ""),
+	// 	Region:           aws.String(*region),
+	// 	S3ForcePathStyle: aws.Bool(true),
+	// }
+
 	flag.Parse()
 
 	if *version {
@@ -135,6 +145,11 @@ func main() {
 	if *numTags < 1 {
 		fmt.Println("-numTags cannot be less than 1")
 		os.Exit(1)
+	}
+
+	if *objectSize >= "1Mb" {
+		fmt.Println("This is a multipart upload. Redirecting to another function.....")
+		MultipartUpload(*accessKey, *accessSecret, *region, *bucketName, *endpoint)
 	}
 
 	// Setup and print summary of the accepted parameters
@@ -175,7 +190,7 @@ func main() {
 			bufferBytes = make([]byte, params.objectSize, params.objectSize)
 			_, err := rand.Read(bufferBytes)
 			m[i] = bufferBytes
-			
+
 			if err != nil {
 				panic("Could not allocate a buffer")
 			}
@@ -185,7 +200,7 @@ func main() {
 			data_hash_array[i] = data_hash_base32
 		}
 		fmt.Println("")
-		
+
 		bufferBytesMap = m
 		params.printf("Done (%s)\n", time.Since(timeGenData))
 	}
@@ -195,6 +210,22 @@ func main() {
 		Region:           aws.String(*region),
 		S3ForcePathStyle: aws.Bool(true),
 	}
+
+	fmt.Println("credentials are .....", cfg)
+
+	// if data_hash_base32 == "" {
+	// 	var err error
+	// 	data_hash_base32, err = params.getObjectHash(cfg)
+	// 	if err != nil {
+	// 		panic(fmt.Sprintf("Cannot read object hash:> %v", err))
+	// 	}
+	// 	var hash_from_b32 []byte
+	// 	hash_from_b32, err = from_b32(data_hash_base32)
+	// 	if err != nil {
+	// 		panic(fmt.Sprintf("Cannot convert object hash:> %v", err))
+	// 	}
+	// 	copy(data_hash[:], hash_from_b32)
+	// }
 
 	bucket_created := params.prepareBucket(cfg)
 
@@ -239,19 +270,19 @@ func main() {
 		for i := 0; i < *numSamples; i++ {
 			key := genObjName(params.objectNamePrefix, uint(i))
 			fmt.Println(*key)
-			err := os.Remove("/tmp/" + params.bucketName + "/" + *key) 
-			if err != nil { 
-				log.Fatal(err) 
+			err := os.Remove("/tmp/" + params.bucketName + "/" + *key)
+			if err != nil {
+				log.Fatal(err)
 			}
 			if params.putObjTag {
 				deleteObjectTaggingInput := &s3.DeleteObjectTaggingInput{
-						Bucket: aws.String(*bucketName),
-						Key:    key,
+					Bucket: aws.String(*bucketName),
+					Key:    key,
 				}
 				_, err := svc.DeleteObjectTagging(deleteObjectTaggingInput)
 				params.printf("Delete tags %s |err %v\n", *key, err)
 			}
-			bar := s3.ObjectIdentifier{ Key: key, }
+			bar := s3.ObjectIdentifier{Key: key}
 			keyList = append(keyList, &bar)
 			if len(keyList) == params.deleteAtOnce || i == *numSamples-1 {
 				params.printf("Deleting a batch of %d objects in range {%d, %d}... ", len(keyList), i-len(keyList)+1, i)
@@ -323,68 +354,80 @@ func (params *Params) submitLoad(op string) {
 	var objectCount uint = 0
 	bucket := aws.String(params.bucketName)
 	opSamples := params.spo(op)
-	
+	// objectCountFile, err := os.OpenFile("/tmp/objCount" , os.O_RDWR, 0600)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer objectCountFile.Close()
+	// scanner := bufio.NewScanner(objectCountFile)
+	// for scanner.Scan() {
+	//     x, err := strconv.ParseUint(scanner.Text(), 10 , 64)
+	//     if err != nil {
+	//         fmt.Println(err)
+	//     }
+	//     objectCount = uint(x)
+	// }
+
 	for i := uint(0); i < opSamples; i++ {
 		key := genObjName(params.objectNamePrefix, uint(i))
 		if op == opWrite {
-			objectCount ++
+			objectCount++
 			fmt.Println("Creating hash file ...")
-		if _, err := os.Stat("/tmp/" + params.bucketName + "/"); os.IsNotExist(err) {
-			err := os.Mkdir("/tmp/" + params.bucketName + "/", 0755)	
+			if _, err := os.Stat("/tmp/" + params.bucketName + "/"); os.IsNotExist(err) {
+				err := os.Mkdir("/tmp/"+params.bucketName+"/", 0755)
+				if err != nil {
+					log.Fatal(err)
+				}
+			}
+			hashFile, err := os.Create("/tmp/" + params.bucketName + "/" + *key)
 			if err != nil {
 				log.Fatal(err)
 			}
-		}
-		hashFile, err := os.Create("/tmp/" + params.bucketName + "/" + *key)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if _, err := hashFile.WriteString(data_hash_array[i]); err != nil {
-			log.Fatal(err)
-		}
-		hashFile.Close()
-		
+			if _, err := hashFile.WriteString(data_hash_array[i]); err != nil {
+				log.Fatal(err)
+			}
+			hashFile.Close()
+
 			params.requests <- Req{
 				top: op,
-				req : &s3.PutObjectInput{
+				req: &s3.PutObjectInput{
 					Bucket: bucket,
 					Key:    key,
 					Body:   bytes.NewReader(bufferBytesMap[i]),
 				},
 			}
 		} else if op == opRead || op == opValidate {
-				params.requests <- Req{
-					top: op,
-					req: &s3.GetObjectInput{
-						Bucket: bucket,
-						Key:    key,
-					},
-					
-				}
+			params.requests <- Req{
+				top: op,
+				req: &s3.GetObjectInput{
+					Bucket: bucket,
+					Key:    key,
+				},
+			}
 		} else if op == opHeadObj {
-				params.requests <- Req{
-					top: op,
-					req: &s3.HeadObjectInput{
-						Bucket: bucket,
-						Key:    key,
-					},
-				}
+			params.requests <- Req{
+				top: op,
+				req: &s3.HeadObjectInput{
+					Bucket: bucket,
+					Key:    key,
+				},
+			}
 		} else if op == opPutObjTag {
 			tagSet := make([]*s3.Tag, 0, params.numTags)
 			for iTag := uint(0); iTag < params.numTags; iTag++ {
 				tag_name := fmt.Sprintf("%s%d", params.tagNamePrefix, iTag)
 				tag_value := fmt.Sprintf("%s%d", params.tagValPrefix, iTag)
-				tagSet = append(tagSet, &s3.Tag {
-						Key:   &tag_name,
-						Value: &tag_value,
-						})
+				tagSet = append(tagSet, &s3.Tag{
+					Key:   &tag_name,
+					Value: &tag_value,
+				})
 			}
 			params.requests <- Req{
 				top: op,
 				req: &s3.PutObjectTaggingInput{
-					Bucket: bucket,
-					Key:    key,
-					Tagging: &s3.Tagging{ TagSet: tagSet, },
+					Bucket:  bucket,
+					Key:     key,
+					Tagging: &s3.Tagging{TagSet: tagSet},
 				},
 			}
 		} else if op == opGetObjTag {
@@ -400,6 +443,16 @@ func (params *Params) submitLoad(op string) {
 		}
 	}
 
+	// objectCountFile1, err := os.OpenFile("/tmp/objCount" , os.O_RDWR, 0600)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Println("write in file ",objectCount)
+	// fmt.Println(string(objectCount))
+	// if _, err := objectCountFile1.WriteString(strconv.FormatUint(uint64(objectCount), 10)); err != nil {
+	// 	log.Fatal(err)
+	// }
+	// objectCountFile1.Close()
 }
 
 func (params *Params) StartClients(cfg *aws.Config) {
@@ -456,8 +509,8 @@ func (params *Params) startClient(cfg *aws.Config) {
 			}
 			if cur_op == opValidate && err == nil {
 				cur_sum := hasher.Sum(nil)
-				fmt.Println("Checksumm of current read",to_b32(cur_sum[:]))
-				if !compareHash(*r.Bucket,*r.Key,to_b32(cur_sum)) {
+				fmt.Println("cursum", to_b32(cur_sum[:]))
+				if !compareHash(*r.Bucket, *r.Key, to_b32(cur_sum)) {
 					cur_sum_enc := to_b32(cur_sum[:])
 					err = fmt.Errorf("Read data checksum %s is not eq to write data checksum %s", cur_sum_enc, data_hash_base32)
 				}
