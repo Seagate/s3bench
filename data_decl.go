@@ -8,12 +8,12 @@ var (
 )
 
 const (
-	opRead  = "Read"
-	opWrite = "Write"
-	opHeadObj = "HeadObj"
+	opRead      = "Read"
+	opWrite     = "Write"
+	opHeadObj   = "HeadObj"
 	opGetObjTag = "GetObjTag"
 	opPutObjTag = "PutObjTag"
-	opValidate = "Validate"
+	opValidate  = "Validate"
 )
 
 type Req struct {
@@ -30,30 +30,39 @@ type Resp struct {
 
 // Specifies the parameters for a given test
 type Params struct {
-	requests         chan Req
-	responses        chan Resp
-	numSamples       uint
-	numClients       uint
-	objectSize       int64
-	objectNamePrefix string
-	bucketName       string
-	endpoints        []string
-	verbose          bool
-	headObj          bool
-	sampleReads      uint
-	clientDelay      int
-	jsonOutput       bool
-	deleteAtOnce     int
-	putObjTag        bool
-	getObjTag        bool
-	numTags          uint
-	readObj          bool
-	tagNamePrefix    string
-	tagValPrefix     string
-	reportFormat     string
-	validate         bool
-	skipWrite        bool
-	skipRead         bool
+	requests                 chan Req
+	responses                chan Resp
+	numSamples               uint
+	numClients               uint
+	objectSize               int64
+	objectNamePrefix         string
+	bucketName               string
+	endpoints                []string
+	verbose                  bool
+	headObj                  bool
+	sampleReads              uint
+	clientDelay              int
+	jsonOutput               bool
+	deleteAtOnce             int
+	putObjTag                bool
+	getObjTag                bool
+	numTags                  uint
+	readObj                  bool
+	tagNamePrefix            string
+	tagValPrefix             string
+	reportFormat             string
+	validate                 bool
+	skipWrite                bool
+	skipRead                 bool
+	reductionBlockSize       int64
+	cortxUnitSize            int64
+	dedupPercent             int32
+	compressPercent          int32
+	compressBufferPattern    string
+	compessBufferPatternFile string
+	compressZeroFill         bool
+	testReductionFile        string
+	uniqueDataPerRequest     bool
 }
 
 // Contains the summary for a given test result

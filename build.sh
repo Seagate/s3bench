@@ -7,6 +7,7 @@ githash=$(git rev-parse HEAD)
 
 echo "Building version $now-$githash..."
 
-go build -ldflags "-X main.gitHash=$githash -X main.buildDate=$now"
+rm -rf build/
+go build -ldflags "-X main.gitHash=$githash -X main.buildDate=$now" -o build/s3bench
 
 echo "Complete"

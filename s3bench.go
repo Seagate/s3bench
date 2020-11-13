@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha512"
-	"hash"
 	"flag"
 	"fmt"
+	"hash"
 	"io"
 	"io/ioutil"
+	mathrand "math/rand"
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
-	mathrand "math/rand"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -21,7 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 )
 
-var bufferBytes []byte
+var bufferBytes [][]byte
 var data_hash_base32 string
 var data_hash [sha512.Size]byte
 
@@ -72,6 +73,15 @@ func main() {
 	validate := flag.Bool("validate", false, "validate stored data")
 	skipWrite := flag.Bool("skipWrite", false, "do not run Write test")
 	skipRead := flag.Bool("skipRead", false, "do not run Read test")
+	reductionBlockSizeStr := flag.String("reductionBlockSize", "4Kb", "Block size for deduplication and compression")
+	cortxUnitSizeStr := flag.String("cortxUnitSize", "0b", "0: ignored. Blocks are duplicated only within every cortxUnitSize of data. Must be a multiple of reductionBlockSize")
+	dedupPercent := flag.Int("dedupPercent", 0, "Percentage of duplicate data within objects")
+	compressPercent := flag.Int("compressPercent", 0, "Percentage of compressible data within objects")
+	compressBufferPattern := flag.String("compressBufferPattern", "", "Buffer pattern to be used for compression")
+	compessBufferPatternFile := flag.String("compessBufferPatternFile", "", "File name containing compressible data used as compressBufferPattern")
+	compressZeroFill := flag.Bool("compressZeroFill", false, "true: compressible data is zero'ed, (default)false: filled with fixed char 'A'")
+	testReductionFile := flag.String("testReductionFile", "", "Dump generated object data to test file for verification purposes.")
+	uniqueDataPerRequest := flag.Bool("uniqueDataPerRequest", false, "Each S3 PUT request will have it's own data, different from other S3 PUTs. Without this flag being set all PUT requests get the same data")
 
 	flag.Parse()
 
@@ -101,46 +111,156 @@ func main() {
 		os.Exit(1)
 	}
 
+	if parse_size(*reductionBlockSizeStr) < 1 {
+		fmt.Println("reductionBlockSize cannot be less than 1")
+		os.Exit(1)
+	}
+
+	var cortxUnitSize int64 = parse_size(*cortxUnitSizeStr)
+	var reductionBlockSize int64 = parse_size(*reductionBlockSizeStr)
+	if *dedupPercent < 0 || *compressPercent < 0 || *dedupPercent > 100 || *compressPercent > 100 {
+		fmt.Printf("Unsupported values for dedupPercent(%d) or compressPercent(%d)", *dedupPercent, *compressPercent)
+		os.Exit(1)
+	} else if *dedupPercent > 0 || *compressPercent > 0 {
+		if cortxUnitSize > 0 {
+			if cortxUnitSize%reductionBlockSize != 0 {
+				fmt.Println("cortxUnitSize should be a multiple of reductionBlockSize.")
+				os.Exit(1)
+			}
+			objSize := parse_size(*objectSize)
+			if objSize < cortxUnitSize {
+				fmt.Println("objectSize should be greater than cortxUnitSize.")
+				os.Exit(1)
+			}
+		}
+	} else {
+		// both dedupPercent or compressPercent are equal to zero
+		// no dedup or compressible data expected.
+		cortxUnitSize = 0
+	}
+
 	// Setup and print summary of the accepted parameters
 	params := Params{
-		requests:         make(chan Req),
-		responses:        make(chan Resp),
-		numSamples:       uint(*numSamples),
-		numClients:       uint(*numClients),
-		objectSize:       parse_size(*objectSize),
-		objectNamePrefix: *objectNamePrefix,
-		bucketName:       *bucketName,
-		endpoints:        strings.Split(*endpoint, ","),
-		verbose:          *verbose,
-		headObj:          *headObj,
-		sampleReads:      uint(*sampleReads),
-		clientDelay:      *clientDelay,
-		jsonOutput:       *jsonOutput,
-		deleteAtOnce:     *deleteAtOnce,
-		putObjTag:        *putObjTag || *getObjTag,
-		getObjTag:        *getObjTag,
-		numTags:          uint(*numTags),
-		readObj:          !(*putObjTag || *getObjTag || *headObj) && !*skipRead,
-		tagNamePrefix:    *tagNamePrefix,
-		tagValPrefix:     *tagValPrefix,
-		reportFormat:     *reportFormat,
-		validate:         *validate,
-		skipWrite:        *skipWrite,
-		skipRead:         *skipRead,
+		requests:                 make(chan Req),
+		responses:                make(chan Resp),
+		numSamples:               uint(*numSamples),
+		numClients:               uint(*numClients),
+		objectSize:               parse_size(*objectSize),
+		objectNamePrefix:         *objectNamePrefix,
+		bucketName:               *bucketName,
+		endpoints:                strings.Split(*endpoint, ","),
+		verbose:                  *verbose,
+		headObj:                  *headObj,
+		sampleReads:              uint(*sampleReads),
+		clientDelay:              *clientDelay,
+		jsonOutput:               *jsonOutput,
+		deleteAtOnce:             *deleteAtOnce,
+		putObjTag:                *putObjTag || *getObjTag,
+		getObjTag:                *getObjTag,
+		numTags:                  uint(*numTags),
+		readObj:                  !(*putObjTag || *getObjTag || *headObj) && !*skipRead,
+		tagNamePrefix:            *tagNamePrefix,
+		tagValPrefix:             *tagValPrefix,
+		reportFormat:             *reportFormat,
+		validate:                 *validate,
+		skipWrite:                *skipWrite,
+		skipRead:                 *skipRead,
+		reductionBlockSize:       reductionBlockSize,
+		cortxUnitSize:            cortxUnitSize,
+		dedupPercent:             int32(*dedupPercent),
+		compressPercent:          int32(*dedupPercent),
+		compressBufferPattern:    *compressBufferPattern,
+		compessBufferPatternFile: *compessBufferPatternFile,
+		compressZeroFill:         *compressZeroFill,
+		uniqueDataPerRequest:     *uniqueDataPerRequest,
 	}
 
 	if !params.skipWrite {
 		// Generate the data from which we will do the writting
 		params.printf("Generating in-memory sample data...\n")
-		timeGenData := time.Now()
-		bufferBytes = make([]byte, params.objectSize, params.objectSize)
-		_, err := rand.Read(bufferBytes)
-		if err != nil {
-			panic("Could not allocate a buffer")
+
+		// Allocate the buffers
+		// If uniqueDataPerRequest is enabled, create seperate buffer filled with data
+		// per s3 put obj request, else just allocate & populate one buffer and use references
+		// to same buffer
+		bufferBytes = make([][]byte, params.numSamples, params.numSamples)
+		var numberOfBuffers uint = 1
+		if params.uniqueDataPerRequest {
+			numberOfBuffers = params.numSamples
+			// Allocate multiple buffers, one per s3 request
+			for i := uint(0); i < params.numSamples; i++ {
+				bufferBytes[i] = make([]byte, params.objectSize, params.objectSize)
+			}
+		} else {
+			// Allocate only one buffer and use references to this single buffer.
+			bufferBytes[0] = make([]byte, params.objectSize, params.objectSize)
+			for i := uint(1); i < params.numSamples; i++ {
+				bufferBytes[i] = bufferBytes[0] // point to the same buffer
+			}
 		}
-		data_hash = sha512.Sum512(bufferBytes)
+
+		// Fill the buffers
+		timeGenData := time.Now()
+		if *dedupPercent > 0 || *compressPercent > 0 {
+			totalUnits := int64(1)
+			lastUnitSize := int64(0)
+			if cortxUnitSize > 0 {
+				// Apply fillBuffer() for each cortUnitSize 'ed buffer
+				totalUnits = params.objectSize / cortxUnitSize
+				if params.objectSize%cortxUnitSize != 0 {
+					// We have one more unit at the end which is less than cortxUnitSize
+					totalUnits++
+					lastUnitSize = params.objectSize % cortxUnitSize
+				}
+			} else {
+				// Treat entire object as single unit
+				cortxUnitSize = params.objectSize
+			}
+			// Fill each preallocated buffer with data as per data reduction settings.
+			var wg sync.WaitGroup
+			for i := uint(0); i < numberOfBuffers; i++ {
+				wg.Add(1)
+				go func(bufferIndex uint) {
+					defer wg.Done()
+					for unitNumber := int64(0); unitNumber < totalUnits; unitNumber++ {
+						startOffset := unitNumber * cortxUnitSize
+						endOffset := startOffset + cortxUnitSize
+						if unitNumber == totalUnits-1 {
+							// This is last unit, check if its not equal to cortxUnitSize and update the end offset
+							if lastUnitSize != 0 && lastUnitSize != cortxUnitSize {
+								endOffset = startOffset + lastUnitSize
+							}
+						}
+						fillBuffer(bufferBytes[bufferIndex][startOffset:endOffset], reductionBlockSize, int32(*dedupPercent),
+							int32(*compressPercent), []byte(*compressBufferPattern), *compressZeroFill)
+					}
+				}(i)
+			}
+			wg.Wait()
+		} else {
+			for i := uint(0); i < numberOfBuffers; i++ {
+				_, err := rand.Read(bufferBytes[i])
+				if err != nil {
+					panic("Could not allocate a buffer")
+				}
+			}
+		}
+		data_hash = sha512.Sum512(bufferBytes[0])
 		data_hash_base32 = to_b32(data_hash[:])
 		params.printf("Done (%s)\n", time.Since(timeGenData))
+
+		// If data verification is expected, dump generated data to file and exit.
+		if *testReductionFile != "" {
+			fmt.Println("data_hash = ", data_hash)
+			fmt.Println("data_hash_base32 = ", data_hash_base32)
+			err := ioutil.WriteFile(*testReductionFile, bufferBytes[0], 0644)
+			if err != nil {
+				fmt.Println("Error writing to testReductionFile.")
+				os.Exit(1)
+			} else {
+				os.Exit(0)
+			}
+		}
 	}
 
 	cfg := &aws.Config{
@@ -208,13 +328,13 @@ func main() {
 
 			if params.putObjTag {
 				deleteObjectTaggingInput := &s3.DeleteObjectTaggingInput{
-						Bucket: aws.String(*bucketName),
-						Key:    key,
+					Bucket: aws.String(*bucketName),
+					Key:    key,
 				}
 				_, err := svc.DeleteObjectTagging(deleteObjectTaggingInput)
 				params.printf("Delete tags %s |err %v\n", *key, err)
 			}
-			bar := s3.ObjectIdentifier{ Key: key, }
+			bar := s3.ObjectIdentifier{Key: key}
 			keyList = append(keyList, &bar)
 			if len(keyList) == params.deleteAtOnce || i == *numSamples-1 {
 				params.printf("Deleting a batch of %d objects in range {%d, %d}... ", len(keyList), i-len(keyList)+1, i)
@@ -286,48 +406,48 @@ func (params *Params) submitLoad(op string) {
 	bucket := aws.String(params.bucketName)
 	opSamples := params.spo(op)
 	for i := uint(0); i < opSamples; i++ {
-		key := genObjName(params.objectNamePrefix, data_hash_base32, i % params.numSamples)
+		key := genObjName(params.objectNamePrefix, data_hash_base32, i%params.numSamples)
 		if op == opWrite {
 			params.requests <- Req{
 				top: op,
-				req : &s3.PutObjectInput{
+				req: &s3.PutObjectInput{
 					Bucket: bucket,
 					Key:    key,
-					Body:   bytes.NewReader(bufferBytes),
+					Body:   bytes.NewReader(bufferBytes[i]),
 				},
 			}
 		} else if op == opRead || op == opValidate {
-				params.requests <- Req{
-					top: op,
-					req: &s3.GetObjectInput{
-						Bucket: bucket,
-						Key:    key,
-					},
-				}
+			params.requests <- Req{
+				top: op,
+				req: &s3.GetObjectInput{
+					Bucket: bucket,
+					Key:    key,
+				},
+			}
 		} else if op == opHeadObj {
-				params.requests <- Req{
-					top: op,
-					req: &s3.HeadObjectInput{
-						Bucket: bucket,
-						Key:    key,
-					},
-				}
+			params.requests <- Req{
+				top: op,
+				req: &s3.HeadObjectInput{
+					Bucket: bucket,
+					Key:    key,
+				},
+			}
 		} else if op == opPutObjTag {
 			tagSet := make([]*s3.Tag, 0, params.numTags)
 			for iTag := uint(0); iTag < params.numTags; iTag++ {
 				tag_name := fmt.Sprintf("%s%d", params.tagNamePrefix, iTag)
 				tag_value := fmt.Sprintf("%s%d", params.tagValPrefix, iTag)
-				tagSet = append(tagSet, &s3.Tag {
-						Key:   &tag_name,
-						Value: &tag_value,
-						})
+				tagSet = append(tagSet, &s3.Tag{
+					Key:   &tag_name,
+					Value: &tag_value,
+				})
 			}
 			params.requests <- Req{
 				top: op,
 				req: &s3.PutObjectTaggingInput{
-					Bucket: bucket,
-					Key:    key,
-					Tagging: &s3.Tagging{ TagSet: tagSet, },
+					Bucket:  bucket,
+					Key:     key,
+					Tagging: &s3.Tagging{TagSet: tagSet},
 				},
 			}
 		} else if op == opGetObjTag {

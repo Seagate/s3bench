@@ -103,7 +103,7 @@ func (params Params) reportPrint(report map[string]interface{}) {
 	if params.jsonOutput {
 		b, err := json.Marshal(report)
 		if err != nil {
-			fmt.Println("Cannot generate JSON report %v", err)
+			fmt.Printf("Cannot generate JSON report %v", err)
 		}
 		fmt.Println(string(b))
 		return
