@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -164,32 +165,37 @@ func TestDedupObject(t *testing.T) {
 	// Execute all the test cases
 	for _, testCase := range testCases {
 		t.Run(testCase.testName, func(t *testing.T) {
-
+			var logMessageString string = "\n"
 			originalDataBuffer := make([]byte, testCase.params.objectSize, testCase.params.objectSize)
 
 			// Generate the duplicate data
 			fillBuffer(originalDataBuffer, testCase.params.blockSize,
 				testCase.params.dedupPercent, testCase.params.compressPercent,
 				testCase.params.bufferPattern, testCase.params.zeroFill)
+			originalDataBufferLength := len(originalDataBuffer)
+			logMessageString += fmt.Sprintf("originalDataBufferLength(%d)\n", originalDataBufferLength)
 
 			// Deduplicate the data
 			dedupBuffer := dedup(originalDataBuffer, testCase.params.blockSize)
+			dedupBufferLength := len(dedupBuffer)
+			logMessageString += fmt.Sprintf("dedupBufferLength(%d)\n", dedupBufferLength)
 
 			// After dedup len of data should be reduced by dedupPercent, with margin of 5%
 			calculatedDedupPercent := int32(calcPercentage(len(originalDataBuffer),
 				len(dedupBuffer)))
+			logMessageString += fmt.Sprintf("calculatedDedupPercent(%d)\n", calculatedDedupPercent)
+			logMessageString += fmt.Sprintf("Requested dedupPercent(%d)\n", testCase.params.dedupPercent)
 
 			diffPercent := getPositiveDiff(testCase.params.dedupPercent, calculatedDedupPercent)
+			logMessageString += fmt.Sprintf("diffPercent(%d)\n", diffPercent)
 
-			// diffPercent should be less than 5%
+			// diffPercent should be less than testCase.percentMargin
+			logMessageString += fmt.Sprintf("percentMargin(%d)\n", testCase.percentMargin)
 			if diffPercent > testCase.percentMargin {
 				t.Errorf("Invalid duplicate data generation .")
-				t.Errorf("len(originalDataBuffer) = %d", len(originalDataBuffer))
-				t.Errorf("len(dedupBuffer) = %d", len(dedupBuffer))
-				t.Errorf("calculatedDedupPercent = %d", calculatedDedupPercent)
-				t.Errorf("dedupPercent = %d", testCase.params.dedupPercent)
-				t.Errorf("diffPercent = %d", diffPercent)
+				t.Errorf(logMessageString)
 			}
+			t.Log(logMessageString)
 		}) // go func
 	} // t.Run
 
