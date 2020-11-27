@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func getPositiveDiff(val1 int32, val2 int32) int32 {
+	if val1 > val2 {
+		return val1 - val2
+	} else {
+		return val2 - val1
+	}
+}
+
+func calcPercentage(val1 int, val2 int) float64 {
+	diff := float64(0)
+	if val1 > val2 {
+		diff = ((float64(val1) - float64(val2)) / float64(val1)) * 100.0
+	} else {
+		diff = ((float64(val2) - float64(val1)) / float64(val2)) * 100.0
+	}
+	return diff
+}
+
 func TestDedup50Percent10BytesObject(t *testing.T) {
 	var bufferBytes []byte
 	var objectSize int64 = 10
@@ -28,34 +46,151 @@ func TestDedup50Percent10BytesObject(t *testing.T) {
 	}
 }
 
-func TestDedup20Percent100BytesObject(t *testing.T) {
-	var bufferBytes []byte
-	var objectSize int64 = 100
-	var dedupPercent int32 = 20
-	var compressPercent int32 = 0
-	var blockSize int64 = 5
-	var bufferPattern []byte
-	var zeroFill bool = false
+func TestDedupObject(t *testing.T) {
 
-	bufferBytes = make([]byte, objectSize, objectSize)
-
-	// debugEnabled = true
-	fillBuffer(bufferBytes, blockSize, dedupPercent, compressPercent,
-		bufferPattern, zeroFill)
-
-	// Assert last 5 buffers as duplicate in reverse order
-	currentOffset := objectSize - blockSize
-	for i := 0; i < 5; i++ {
-		firstChunkStart := currentOffset
-		firstChunkEnd := currentOffset + blockSize
-		secondChunkStart := firstChunkStart - blockSize
-		secondChunkEnd := secondChunkStart + blockSize
-		if !bytes.Equal(bufferBytes[firstChunkStart:firstChunkEnd], bufferBytes[secondChunkStart:secondChunkEnd]) {
-			t.Errorf("Failed generating duplicate data.")
-			t.Errorf("bufferBytes[] = %x", bufferBytes)
-			t.Errorf("bufferBytes[%d:%d] = %x", firstChunkStart, firstChunkEnd, bufferBytes[firstChunkStart:firstChunkEnd])
-			t.Errorf("bufferBytes[%d:%d] = %x", secondChunkStart, secondChunkEnd, bufferBytes[secondChunkStart:secondChunkEnd])
-		}
-		firstChunkStart = secondChunkStart
+	type Params struct {
+		objectSize      int64
+		dedupPercent    int32
+		compressPercent int32
+		blockSize       int64
+		bufferPattern   []byte
+		zeroFill        bool
 	}
+
+	// Define various tests
+	testCases := []struct {
+		testName      string
+		params        Params
+		percentMargin int32 // expected error margin in calculated dedup percentage
+	}{
+		{
+			testName: "Test1: 20% duplicate data for 100 bytes object",
+			params: Params{
+				objectSize:      100,
+				dedupPercent:    20,
+				compressPercent: 0,
+				blockSize:       10,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 0,
+		},
+		{
+			testName: "Test1: 25% duplicate data for 4K object",
+			params: Params{
+				objectSize:      4096,
+				dedupPercent:    25,
+				compressPercent: 0,
+				blockSize:       512,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 5,
+		},
+		{
+			testName: "Test1: 64% duplicate data for 4K object",
+			params: Params{
+				objectSize:      4096,
+				dedupPercent:    64,
+				compressPercent: 0,
+				blockSize:       512,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 5,
+		},
+		{
+			testName: "Test1: 25% duplicate data for 1MB object with 4k block",
+			params: Params{
+				objectSize:      1024 * 1024,
+				dedupPercent:    25,
+				compressPercent: 0,
+				blockSize:       4096,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 5,
+		},
+		{
+			testName: "Test1: 11% duplicate data for 1MB object with 4k block",
+			params: Params{
+				objectSize:      1024 * 1024,
+				dedupPercent:    11,
+				compressPercent: 0,
+				blockSize:       4096,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 5,
+		},
+		{
+			testName: "Test1: 0% duplicate data for 1MB object with 4k block",
+			params: Params{
+				objectSize:      1024 * 1024,
+				dedupPercent:    0,
+				compressPercent: 0,
+				blockSize:       4096,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 0,
+		},
+		{
+			testName: "Test1: 100% duplicate data for 1MB object with 4k block",
+			params: Params{
+				objectSize:      1024 * 1024,
+				dedupPercent:    100,
+				compressPercent: 0,
+				blockSize:       4096,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 1,
+		},
+		{
+			testName: "Test1: 22% duplicate data for 512K object with 4k block",
+			params: Params{
+				objectSize:      512 * 1024,
+				dedupPercent:    22,
+				compressPercent: 0,
+				blockSize:       4096,
+				bufferPattern:   nil,
+				zeroFill:        false,
+			},
+			percentMargin: 2,
+		},
+	}
+
+	// Execute all the test cases
+	for _, testCase := range testCases {
+		t.Run(testCase.testName, func(t *testing.T) {
+
+			originalDataBuffer := make([]byte, testCase.params.objectSize, testCase.params.objectSize)
+
+			// Generate the duplicate data
+			fillBuffer(originalDataBuffer, testCase.params.blockSize,
+				testCase.params.dedupPercent, testCase.params.compressPercent,
+				testCase.params.bufferPattern, testCase.params.zeroFill)
+
+			// Deduplicate the data
+			dedupBuffer := dedup(originalDataBuffer, testCase.params.blockSize)
+
+			// After dedup len of data should be reduced by dedupPercent, with margin of 5%
+			calculatedDedupPercent := int32(calcPercentage(len(originalDataBuffer),
+				len(dedupBuffer)))
+
+			diffPercent := getPositiveDiff(testCase.params.dedupPercent, calculatedDedupPercent)
+
+			// diffPercent should be less than 5%
+			if diffPercent > testCase.percentMargin {
+				t.Errorf("Invalid duplicate data generation .")
+				t.Errorf("len(originalDataBuffer) = %d", len(originalDataBuffer))
+				t.Errorf("len(dedupBuffer) = %d", len(dedupBuffer))
+				t.Errorf("calculatedDedupPercent = %d", calculatedDedupPercent)
+				t.Errorf("dedupPercent = %d", testCase.params.dedupPercent)
+				t.Errorf("diffPercent = %d", diffPercent)
+			}
+		}) // go func
+	} // t.Run
+
 }
