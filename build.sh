@@ -12,4 +12,8 @@ echo "Building version $now-$githash..."
 
 go build -ldflags "-X main.gitHash=$githash -X main.buildDate=$now"
 
+cd ./s3bench_hash
+go build ./s3bench_hash.go
+cd -
+
 echo "Complete"
