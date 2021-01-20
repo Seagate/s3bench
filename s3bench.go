@@ -98,7 +98,7 @@ func main() {
 	protocolDebug := flag.Int("protocolDebug", 0, "Trace client-server exchange")
 	deleteOnly := flag.Bool("deleteOnly", false, "Delete existing objects in the bucket")
 	multipartSize := flag.String("multipartSize", "0b", "Run MultipartUpload with specified part size")
-	zero := flag.Bool("zero", false, "Sample data is all zeros")
+	zero := flag.Bool("zero", false, "Fill object content with all zeroes instead of random data")
 
 	flag.Parse()
 
