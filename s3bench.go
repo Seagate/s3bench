@@ -82,7 +82,7 @@ func main() {
 	tagNamePrefix := flag.String("tagNamePrefix", "tag_name_", "prefix of the tag name that will be used")
 	tagValPrefix := flag.String("tagValPrefix", "tag_val_", "prefix of the tag value that will be used")
 	version := flag.Bool("version", false, "print version info")
-	reportFormat := flag.String("reportFormat", "Version;Parameters;Parameters:numClients;Parameters:numSamples;Parameters:objectSize (MB);Parameters:sampleReads;Parameters:readObj;Parameters:headObj;Parameters:putObjTag;Parameters:getObjTag;Tests:Operation;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;", "rearrange output fields")
+	reportFormat := flag.String("reportFormat", "Version;Parameters;Parameters:numClients;Parameters:numSamples;Parameters:objectSize (MB);Parameters:sampleReads;Parameters:readObj;Parameters:headObj;Parameters:putObjTag;Parameters:getObjTag;Tests:Operation;Tests:RPS;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Total Duration (s);Tests:Total Transferred (MB);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;", "rearrange output fields")
 	validate := flag.Bool("validate", false, "validate stored data")
 	skipWrite := flag.Bool("skipWrite", false, "do not run Write test")
 	skipRead := flag.Bool("skipRead", false, "do not run Read test")
@@ -98,6 +98,7 @@ func main() {
 	protocolDebug := flag.Int("protocolDebug", 0, "Trace client-server exchange")
 	deleteOnly := flag.Bool("deleteOnly", false, "Delete existing objects in the bucket")
 	multipartSize := flag.String("multipartSize", "0b", "Run MultipartUpload with specified part size")
+	zero := flag.Bool("zero", false, "Sample data is all zeros")
 
 	flag.Parse()
 
@@ -196,6 +197,7 @@ func main() {
 		protocolDebug:         *protocolDebug,
 		deleteOnly:            *deleteOnly,
 		multipartSize:         parse_size(*multipartSize),
+		zero:                  *zero,
 	}
 
 	if params.deleteOnly {
@@ -214,9 +216,11 @@ func main() {
 		params.printf("Generating in-memory sample data...\n")
 		timeGenData := time.Now()
 		bufferBytes = make([]byte, params.objectSize, params.objectSize)
-		_, err := rand.Read(bufferBytes)
-		if err != nil {
-			panic("Could not allocate a buffer")
+		if !params.zero {
+			_, err := rand.Read(bufferBytes)
+			if err != nil {
+				panic("Could not allocate a buffer")
+			}
 		}
 		data_hash = sha512.Sum512(bufferBytes)
 		data_hash_base32 = to_b32(data_hash[:])

@@ -67,6 +67,7 @@ type Params struct {
 	protocolDebug         int
 	deleteOnly            bool
 	multipartSize         int64
+	zero                  bool
 }
 
 // Contains the summary for a given test result

@@ -115,12 +115,15 @@ func (params Params) reportPrint(report map[string]interface{}) {
 func (r Result) report() map[string]interface{} {
 	ret := make(map[string]interface{})
 	ret["Operation"] = r.operation
-	ret["Total Requests Count"] = len(r.opDurations)
+
+	totreqs := len(r.opDurations)
+	totdur := r.totalDuration.Seconds()
+	ret["Total Requests Count"] = totreqs
 	if r.operation == opWrite || r.operation == opRead || r.operation == opValidate {
 		ret["Total Transferred (MB)"] = float64(r.bytesTransmitted)/(1024*1024)
-		ret["Total Throughput (MB/s)"] = (float64(r.bytesTransmitted)/(1024*1024))/r.totalDuration.Seconds()
+		ret["Total Throughput (MB/s)"] = (float64(r.bytesTransmitted)/(1024*1024))/totdur
 	}
-	ret["Total Duration (s)"] = r.totalDuration.Seconds()
+	ret["Total Duration (s)"] = totdur
 
 	if len(r.opDurations) > 0 {
 		ret["Duration Max"] = percentile(r.opDurations, 100)
@@ -144,8 +147,10 @@ func (r Result) report() map[string]interface{} {
 		ret["Ttfb 25th-ile"] = percentile(r.opTtfb, 25)
 	}
 
-	ret["Errors Count"] = len(r.opErrors)
+	toterrs := len(r.opErrors)
+	ret["Errors Count"] = toterrs
 	ret["Errors"] = r.opErrors
+	ret["RPS"] = float64(totreqs - toterrs) / totdur
 	return ret
 }
 
@@ -184,5 +189,6 @@ func (params Params) report() map[string]interface{} {
 	ret["protocolDebug"] = params.protocolDebug
 	ret["deleteOnly"] = params.deleteOnly
 	ret["multipartSize"] = params.multipartSize
+	ret["zero"] = params.zero
 	return ret
 }
