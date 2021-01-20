@@ -16,12 +16,12 @@ func to_b32(dt []byte) string {
 
 func main() {
 	flag.Usage = func() {
-	fmt.Fprintf(flag.CommandLine.Output(), "%s calculates file's hash sum the same way\n", os.Args[0])
-	fmt.Fprintf(flag.CommandLine.Output(), "s3bench does to generate object name.\n")
-	fmt.Fprintf(flag.CommandLine.Output(), "It could be helpfull for manual object verification.\n\n")
-	fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n")
-	flag.PrintDefaults()
-}
+		fmt.Fprintf(flag.CommandLine.Output(), "%s calculates file's hash sum the same way\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "s3bench does to generate object name.\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "It could be helpfull for manual object verification.\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n")
+		flag.PrintDefaults()
+	}
 
 	file := flag.String("file", "file.ext", "file to read")
 	flag.Parse()
