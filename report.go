@@ -189,5 +189,6 @@ func (params Params) report() map[string]interface{} {
 	ret["protocolDebug"] = params.protocolDebug
 	ret["deleteOnly"] = params.deleteOnly
 	ret["multipartSize"] = params.multipartSize
+	ret["zero"] = params.zero
 	return ret
 }
