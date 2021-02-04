@@ -178,7 +178,7 @@ func main() {
 		putObjTag:        *putObjTag || *getObjTag,
 		getObjTag:        *getObjTag,
 		numTags:          uint(*numTags),
-		readObj:          !(*putObjTag || *getObjTag || *headObj) && !*skipRead,
+		readObj:          !*skipRead,
 		tagNamePrefix:    *tagNamePrefix,
 		tagValPrefix:     *tagValPrefix,
 		reportFormat:     *reportFormat,
