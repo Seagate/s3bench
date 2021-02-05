@@ -1,3 +1,4 @@
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/f0def607de884e2098570eae7b3f3e5e)](https://app.codacy.com/gh/Seagate/s3bench?utm_source=github.com&utm_medium=referral&utm_content=Seagate/s3bench&utm_campaign=Badge_Grade_Settings)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/412fa22ba5f8452794584ed9819f149b)](https://www.codacy.com?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=Seagate/s3bench&amp;utm_campaign=Badge_Grade)
 
 # Initial
