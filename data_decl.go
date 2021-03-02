@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"time"
+	"sync"
+)
 
 var (
 	gitHash   string
@@ -17,12 +20,14 @@ const (
 	opMpUpl = "MultipartUpload"
 )
 
+// Req is used to submit reqs
 type Req struct {
 	top string
 	key string
 	req interface{}
 }
 
+// Resp is used to submit resps
 type Resp struct {
 	err      error
 	duration time.Duration
@@ -30,7 +35,7 @@ type Resp struct {
 	ttfb     time.Duration
 }
 
-// Specifies the parameters for a given test
+// Params contains applications settings
 type Params struct {
 	requests         chan Req
 	responses        chan Resp
@@ -39,11 +44,10 @@ type Params struct {
 	objectSize       int64
 	objectNamePrefix string
 	bucketName       string
+	profile          string
 	endpoints        []string
-	verbose          bool
 	headObj          bool
 	sampleReads      uint
-	jsonOutput       bool
 	deleteAtOnce     int
 	putObjTag        bool
 	getObjTag        bool
@@ -68,9 +72,12 @@ type Params struct {
 	deleteOnly            bool
 	multipartSize         int64
 	zero                  bool
+	label                 string
+	outstream             string
+	outtype               string
 }
 
-// Contains the summary for a given test result
+// Result repr result of the op
 type Result struct {
 	operation        string
 	bytesTransmitted int64
@@ -80,15 +87,24 @@ type Result struct {
 	opErrors         []string
 }
 
-// Delete op
+// DeleteReq is used to submit delete req
 type DeleteReq struct {
 	opName  string
 	dltReq  interface{}
 }
 
-// Delete resp
+// DeleteResp is used to submit delete resp
 type DeleteResp struct {
 	opName  string
 	dur     time.Duration
 	err     error
+}
+
+// MpDetails describe multipart upload req
+type MpDetails struct {
+	partsUploaded int32
+	partsTags sync.Map
+	startTime time.Time
+	ttfb time.Duration
+	uplID *string
 }

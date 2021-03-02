@@ -10,7 +10,7 @@ import (
 	"encoding/base32"
 )
 
-func to_b32(dt []byte) string {
+func toB32(dt []byte) string {
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(dt)
 }
 
@@ -41,8 +41,8 @@ func main() {
 	reader := bufio.NewReader(f)
 	sz, err := io.Copy(hasher, reader)
 	sum := hasher.Sum(nil)
-	hash_base32 := to_b32(sum[:])
+	hashBase32 := toB32(sum[:])
 
-	fmt.Printf("File %v \nSize %v \nS3Bench Hash %v \n", *file, sz, hash_base32)
+	fmt.Printf("File %v \nSize %v \nS3Bench Hash %v \n", *file, sz, hashBase32)
 
 }

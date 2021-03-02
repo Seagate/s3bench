@@ -1,33 +1,35 @@
 package main
 
 import (
+	"log"
 	"fmt"
 	"sort"
 	"strings"
 	"encoding/json"
+	"os"
 )
 
 func keysSort(keys []string, format []string) []string {
 	sort.Strings(keys)
-	cur_formated := 0
+	curFormated := 0
 
 	for _, fv := range format {
 		fv = strings.TrimSpace(fv)
-		should_del := strings.HasPrefix(fv, "-")
-		if should_del {
+		shouldDel := strings.HasPrefix(fv, "-")
+		if shouldDel {
 			fv = fv[1:]
 		}
-		ci := indexOf(keys, fv)
+		ci := findIdxOf(keys, fv)
 		if ci < 0 {
 			continue
 		}
 		// delete old pos
 		keys = append(keys[:ci], keys[ci+1:]...)
 
-		if !should_del {
+		if !shouldDel {
 			// insert new pos
-			keys = append(keys[:cur_formated], append([]string{fv}, keys[cur_formated:]...)...)
-			cur_formated++
+			keys = append(keys[:curFormated], append([]string{fv}, keys[curFormated:]...)...)
+			curFormated++
 		}
 	}
 
@@ -47,44 +49,124 @@ func formatFilter(format []string, key string) []string {
 	return ret
 }
 
-func mapPrint(m map[string]interface{}, repFormat []string, prefix string) {
+func mapPrint(m map[string]interface{}, repFormat []string, prefix string, outf *os.File) {
 	var mkeys []string
-	for k,_ := range m {
+	for k := range m {
 		mkeys = append(mkeys, k)
 	}
 	mkeys = keysSort(mkeys, repFormat)
 	for _, k := range mkeys {
 		v := m[k]
-		fmt.Printf("%s %-27s", prefix, k+":")
+		fmt.Fprintf(outf, "%s %-27s", prefix, k+":")
 		switch val := v.(type) {
 		case []string:
 			if len(val) == 0 {
-				fmt.Printf(" []\n")
+				fmt.Fprintf(outf, " []\n")
 			} else {
-				fmt.Println()
+				fmt.Fprintln(outf)
 				for _, s := range val {
-					fmt.Printf("%s%s %s\n", prefix, prefix, s)
+					fmt.Fprintf(outf, "%s%s %s\n", prefix, prefix, s)
 				}
 			}
 		case map[string]interface{}:
-			fmt.Println()
-			mapPrint(val, formatFilter(repFormat, k), prefix + "   ")
+			fmt.Fprintln(outf)
+			mapPrint(val, formatFilter(repFormat, k), prefix + "   ", outf)
 		case []map[string]interface{}:
 			if len(val) == 0 {
-				fmt.Printf(" []\n")
+				fmt.Fprintf(outf, " []\n")
 			} else {
-				val_format := formatFilter(repFormat, k)
+				valFormat := formatFilter(repFormat, k)
 				for _, m := range val {
-					fmt.Println()
-					mapPrint(m, val_format, prefix + "   ")
+					fmt.Fprintln(outf)
+					mapPrint(m, valFormat, prefix + "   ", outf)
 				}
 			}
 		case float64:
-			fmt.Printf(" %.3f\n", val)
+			fmt.Fprintf(outf, " %.3f\n", val)
 		default:
-			fmt.Printf(" %v\n", val)
+			fmt.Fprintf(outf, " %v\n", val)
 		}
 	}
+}
+
+func reportFilter(m map[string]interface{}, repFormat []string) map[string]interface{} {
+	ret := make(map[string]interface{})
+	var mkeys []string
+	for k := range m {
+		mkeys = append(mkeys, k)
+	}
+	mkeys = keysSort(mkeys, repFormat)
+	for _, k := range mkeys {
+		v := m[k]
+		switch val := v.(type) {
+		case map[string]interface{}:
+			ret[k] = reportFilter(val, formatFilter(repFormat, k))
+		case []map[string]interface{}:
+			tarr := make([]map[string]interface{}, 0, len(val))
+			valFormat := formatFilter(repFormat, k)
+			for _, m := range val {
+				tarr = append(tarr, reportFilter(m, valFormat))
+			}
+			ret[k] = tarr
+		default:
+			ret[k] = val
+		}
+	}
+	return ret
+}
+
+func csvHeaders(m map[string]interface{}, repFormat []string, sep string) string {
+	ret := ""
+	var mkeys []string
+	for k := range m {
+		mkeys = append(mkeys, k)
+	}
+	mkeys = keysSort(mkeys, repFormat)
+	for _, k := range mkeys {
+		v := m[k]
+		switch val := v.(type) {
+		case map[string]interface{}:
+			ret = fmt.Sprintf("%s%s%s", ret, sep, csvHeaders(val, formatFilter(repFormat, k), sep))
+		case []map[string]interface{}:
+			valFormat := formatFilter(repFormat, k)
+			for _, m := range val {
+				ret = fmt.Sprintf("%s%s%s", ret, sep, csvHeaders(m, valFormat, sep))
+			}
+		default:
+			ret = fmt.Sprintf("%s%s%s", ret, sep, k)
+		}
+	}
+	return strings.Trim(ret, sep)
+}
+
+func csvValues(m map[string]interface{}, repFormat []string, sep string, inValSep string) string {
+	ret := ""
+	var mkeys []string
+	for k := range m {
+		mkeys = append(mkeys, k)
+	}
+	mkeys = keysSort(mkeys, repFormat)
+	for _, k := range mkeys {
+		v := m[k]
+		switch val := v.(type) {
+		case []string:
+			retV := ""
+			for _, s := range val {
+				retV = fmt.Sprintf("%s%s%s", retV, inValSep, s)
+			}
+			ret = fmt.Sprintf("%s%s%s", ret, sep, strings.Trim(retV, inValSep))
+		case map[string]interface{}:
+			ret = fmt.Sprintf("%s%s%s", ret, sep, csvValues(val, formatFilter(repFormat, k), sep, inValSep))
+		case []map[string]interface{}:
+			valFormat := formatFilter(repFormat, k)
+			for _, m := range val {
+				ret = fmt.Sprintf("%s%s%s", ret, sep, csvValues(m, valFormat, sep, inValSep))
+			}
+		default:
+			ret = fmt.Sprintf("%s%s%v", ret, sep, val)
+		}
+	}
+	return strings.Trim(ret, sep)
 }
 
 func (params Params) reportPrepare(tests []Result) map[string]interface{} {
@@ -99,17 +181,39 @@ func (params Params) reportPrepare(tests []Result) map[string]interface{} {
 	return report
 }
 
-func (params Params) reportPrint(report map[string]interface{}) {
-	if params.jsonOutput {
-		b, err := json.Marshal(report)
+func (params Params) reportPrint(tests []Result, outf *os.File) {
+	report := params.reportPrepare(tests)
+	b, err := json.MarshalIndent(report, "", "    ")
+	if err != nil {
+		log.Printf("Cannot generate JSON report %v", err)
+		log.Printf("Report:> %+v", report)
+	} else {
+		log.Printf("Report:> %v", string(b))
+	}
+
+	fltr := strings.Split(params.reportFormat, ";")
+	report = reportFilter(report, fltr)
+
+	if params.outtype == "json" {
+		b, err = json.Marshal(report)
 		if err != nil {
-			fmt.Println("Cannot generate JSON report %v", err)
+			log.Printf("Cannot generate JSON report %v", err)
 		}
-		fmt.Println(string(b))
+		fmt.Fprintln(outf, string(b))
+		return
+
+	}
+
+	if params.outtype == "csv" {
+		fmt.Fprintln(outf, csvHeaders(report, fltr, "\t"))
+	}
+
+	if strings.HasPrefix(params.outtype, "csv") {
+		fmt.Fprintln(outf, csvValues(report, fltr, "\t", "|"))
 		return
 	}
 
-	mapPrint(report, strings.Split(params.reportFormat, ";"), "")
+	mapPrint(report, fltr, "", outf)
 }
 
 func (r Result) report() map[string]interface{} {
@@ -119,6 +223,8 @@ func (r Result) report() map[string]interface{} {
 	totreqs := len(r.opDurations)
 	totdur := r.totalDuration.Seconds()
 	ret["Total Requests Count"] = totreqs
+	ret["Total Transferred (MB)"] = 0
+	ret["Total Throughput (MB/s)"] = 0
 	if r.operation == opWrite || r.operation == opRead || r.operation == opValidate {
 		ret["Total Transferred (MB)"] = float64(r.bytesTransmitted)/(1024*1024)
 		ret["Total Throughput (MB/s)"] = (float64(r.bytesTransmitted)/(1024*1024))/totdur
@@ -150,7 +256,7 @@ func (r Result) report() map[string]interface{} {
 	toterrs := len(r.opErrors)
 	ret["Errors Count"] = toterrs
 	ret["Errors"] = r.opErrors
-	ret["RPS"] = float64(totreqs - toterrs) / totdur
+	ret["RPS"] = float64(totreqs) / totdur
 	return ret
 }
 
@@ -163,9 +269,7 @@ func (params Params) report() map[string]interface{} {
 	ret["numClients"] = params.numClients
 	ret["numSamples"] = params.numSamples
 	ret["sampleReads"] = params.sampleReads
-	ret["verbose"] = params.verbose
 	ret["headObj"] = params.headObj
-	ret["jsonOutput"] = params.jsonOutput
 	ret["deleteAtOnce"] = params.deleteAtOnce
 	ret["numTags"] = params.numTags
 	ret["putObjTag"] = params.putObjTag
@@ -190,5 +294,9 @@ func (params Params) report() map[string]interface{} {
 	ret["deleteOnly"] = params.deleteOnly
 	ret["multipartSize"] = params.multipartSize
 	ret["zero"] = params.zero
+	ret["profile"] = params.profile
+	ret["label"] = params.label
+	ret["outstream"] = params.outstream
+	ret["outtype"] = params.outtype
 	return ret
 }

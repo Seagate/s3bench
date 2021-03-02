@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+	"os"
 	"fmt"
 	"strconv"
 	"regexp"
@@ -12,15 +14,27 @@ import (
 
 )
 
-func to_b32(dt []byte) string {
+func startLog(lbl string) *os.File {
+	flog, err := os.OpenFile(fmt.Sprintf("s3bench-%s.log", lbl),
+		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Panic(err)
+	}
+	log.SetOutput(flog)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
+
+	return flog
+}
+
+func toB32(dt []byte) string {
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(dt)
 }
 
-func from_b32(s string) ([]byte, error) {
+func fromB32(s string) ([]byte, error) {
 	return base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(s)
 }
 
-func parse_size(sz string) int64 {
+func parseSize(sz string) int64 {
 	sizes := map[string]int64 {
 		"b": 1,
 		"Kb": 1024,
@@ -30,23 +44,17 @@ func parse_size(sz string) int64 {
 	re := regexp.MustCompile(`^(\d+)([bKMG]{1,2})$`)
 	mm := re.FindStringSubmatch(sz)
 	if len(mm) != 3 {
-		panic("Invalid objectSize value format\n")
+		log.Panic("Invalid objectSize value format")
 	}
 	val, err := strconv.ParseInt(string(mm[1]), 10, 64)
 	mult, ex := sizes[string(mm[2])]
 	if !ex || err != nil {
-		panic("Invalid objectSize value\n")
+		log.Panic("Invalid objectSize value")
 	}
 	return val * mult
 }
 
-func (params Params) printf(f string, args ...interface{}) {
-	if params.verbose {
-		fmt.Printf(f, args...)
-	}
-}
-
-// samples per operation
+// spo - samples per operation
 func (params Params) spo(op string) uint {
 	if op == opWrite || op == opPutObjTag || op == opValidate || op == opMpUpl {
 		return params.numSamples
@@ -72,17 +80,6 @@ func avg(dt []float64) float64 {
 		sm += el
 	}
 	return sm / ln
-}
-
-func indexOf(sls []string, s string) int {
-	ret := -1
-	for i, v := range sls {
-		if v == s {
-			ret = i
-			break
-		}
-	}
-	return ret
 }
 
 func genObjName(pref string, hsh string, idx uint) *string {
@@ -115,10 +112,42 @@ func (params *Params) getObjectHash(cfg *aws.Config) (string, error){
 	return mm[1], nil
 }
 
-func IntMin(a, b int64) int64 {
+func intMin(a, b int64) int64 {
 	if a > b {
 		return b
 	}
 
 	return a
+}
+
+func findIdxOf(vals []string, v string) int {
+	for idx, el := range vals {
+		if el == v {
+			return idx
+		}
+	}
+	return -1
+}
+
+func createReportOut(outtype, outstream string) (*os.File, error) {
+	if outstream == "stderr" {
+		return os.Stderr, nil
+	}
+
+	if outstream == "stdout" {
+		return os.Stdout, nil
+	}
+
+	fmd := os.O_CREATE|os.O_WRONLY
+
+	if outtype == "json" || outtype == "csv" {
+		fmd = fmd|os.O_TRUNC
+	}
+
+	if outtype == "csv+" {
+		fmd = fmd|os.O_APPEND
+	}
+
+	ostrm, err := os.OpenFile(outstream, fmd, 0777)
+	return ostrm, err
 }
