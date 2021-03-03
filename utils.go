@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-
 )
 
 func startLog(lbl string) *os.File {
@@ -130,24 +129,22 @@ func findIdxOf(vals []string, v string) int {
 }
 
 func createReportOut(outtype, outstream string) (*os.File, error) {
-	if outstream == "stderr" {
-		return os.Stderr, nil
-	}
-
-	if outstream == "stdout" {
-		return os.Stdout, nil
-	}
-
 	fmd := os.O_CREATE|os.O_WRONLY
 
-	if outtype == "json" || outtype == "csv" {
+	if outtype != "csv+" {
 		fmd = fmd|os.O_TRUNC
-	}
-
-	if outtype == "csv+" {
+	} else {
 		fmd = fmd|os.O_APPEND
 	}
 
 	ostrm, err := os.OpenFile(outstream, fmd, 0777)
 	return ostrm, err
+}
+
+func nil2int(x interface{}) uint {
+	if x == nil {
+		return 0
+	}
+
+	return 1
 }

@@ -9,15 +9,14 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"os"
 	"sort"
 	"strings"
 	"time"
 	"net"
 	"net/http"
 	"math"
-	"sync"
 	"sync/atomic"
+	"log"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -26,37 +25,38 @@ import (
 )
 
 var bufferBytes []byte
-var data_hash_base32 string
-var data_hash [sha512.Size]byte
+var dataHashBase32 string
+var dataHash [sha512.Size]byte
 
-// multipart
-type MpDetails struct {
-	parts_uploaded int32
-	parts_tags sync.Map
-	start_time time.Time
-	ttfb time.Duration
-	upl_id *string
-}
-var mp_info map[string]*MpDetails
-var mp_parts int32
+var mpInfo map[string]*MpDetails
+var mpParts int32
+
+var progress *ProgressNotifier
 
 // true if created
 // false if existed
 func (params *Params) prepareBucket(cfg *aws.Config) bool {
+	log.Print("Prepare bucket")
 	cfg.Endpoint = aws.String(params.endpoints[0])
 	svc := s3.New(session.New(), cfg)
+
+	timeGenData := time.Now()
 	req, _ := svc.CreateBucketRequest(
 		&s3.CreateBucketInput{Bucket: aws.String(params.bucketName)})
 
 	err := req.Send()
+	log.Printf("CreateBucketRequest done in (%s) | %v",
+		time.Since(timeGenData), err)
 
 	if err == nil {
+		log.Print("Bucket created")
 		return true
 	} else if !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou:") &&
 		!strings.Contains(err.Error(), "BucketAlreadyExists:") {
-		panic("Failed to create bucket: " + err.Error())
+		log.Panicf("Failed to create bucket: %v", err)
 	}
 
+	log.Print("Bucket already exists")
 	return false
 }
 
@@ -65,16 +65,15 @@ func main() {
 	region := flag.String("region", "igneous-test", "AWS region to use, eg: us-west-1|us-east-1, etc")
 	accessKey := flag.String("accessKey", "", "the S3 access key")
 	accessSecret := flag.String("accessSecret", "", "the S3 access secret")
+	profile := flag.String("profile", "", "profile from the credentials file")
 	bucketName := flag.String("bucket", "bucketname", "the bucket for which to run the test")
 	objectNamePrefix := flag.String("objectNamePrefix", "loadgen_test", "prefix of the object name that will be used")
 	objectSize := flag.String("objectSize", "80Mb", "size of individual requests (must be smaller than main memory)")
 	numClients := flag.Int("numClients", 40, "number of concurrent clients")
 	numSamples := flag.Int("numSamples", 200, "total number of requests to send")
 	skipCleanup := flag.Bool("skipCleanup", false, "skip deleting objects created by this tool at the end of the run")
-	verbose := flag.Bool("verbose", false, "print verbose per thread status")
 	headObj := flag.Bool("headObj", false, "head-object request instead of reading obj content")
 	sampleReads := flag.Int("sampleReads", 1, "number of reads of each sample")
-	jsonOutput := flag.Bool("jsonOutput", false, "print results in forma of json")
 	deleteAtOnce := flag.Int("deleteAtOnce", 1000, "number of objs to delete at once")
 	putObjTag := flag.Bool("putObjTag", false, "put object's tags")
 	getObjTag := flag.Bool("getObjTag", false, "get object's tags")
@@ -82,7 +81,7 @@ func main() {
 	tagNamePrefix := flag.String("tagNamePrefix", "tag_name_", "prefix of the tag name that will be used")
 	tagValPrefix := flag.String("tagValPrefix", "tag_val_", "prefix of the tag value that will be used")
 	version := flag.Bool("version", false, "print version info")
-	reportFormat := flag.String("reportFormat", "Version;Parameters;Parameters:numClients;Parameters:numSamples;Parameters:objectSize (MB);Parameters:sampleReads;Parameters:readObj;Parameters:headObj;Parameters:putObjTag;Parameters:getObjTag;Tests:Operation;Tests:RPS;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Total Duration (s);Tests:Total Transferred (MB);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;", "rearrange output fields")
+	reportFormat := flag.String("reportFormat", "Parameters:label;Parameters:numClients;Parameters:objectSize (MB);-Parameters:numSamples;-Parameters:sampleReads;-Parameters:readObj;-Parameters:headObj;-Parameters:putObjTag;-Parameters:getObjTag;-Parameters:TLSHandshakeTimeout;-Parameters:bucket;-Parameters:connectTimeout;-Parameters:deleteAtOnce;-Parameters:deleteClients;-Parameters:deleteOnly;-Parameters:endpoints;-Parameters:httpClientTimeout;-Parameters:idleConnTimeout;-Parameters:maxIdleConnsPerHost;-Parameters:multipartSize;-Parameters:numTags;-Parameters:objectNamePrefix;-Parameters:protocolDebug;-Parameters:reportFormat;-Parameters:responseHeaderTimeout;-Parameters:s3Disable100Continue;-Parameters:profile;-Parameters:s3MaxRetries;-Parameters:skipRead;-Parameters:skipWrite;-Parameters:tagNamePrefix;-Parameters:tagValPrefix;-Parameters:validate;-Parameters:zero;-Parameters:outstream;-Parameters:outtype;Tests:Operation;Tests:RPS;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Total Duration (s);Tests:Total Transferred (MB);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;-Tests:Errors;-Version;", "rearrange output fields")
 	validate := flag.Bool("validate", false, "validate stored data")
 	skipWrite := flag.Bool("skipWrite", false, "do not run Write test")
 	skipRead := flag.Bool("skipRead", false, "do not run Read test")
@@ -99,38 +98,57 @@ func main() {
 	deleteOnly := flag.Bool("deleteOnly", false, "Delete existing objects in the bucket")
 	multipartSize := flag.String("multipartSize", "0b", "Run MultipartUpload with specified part size")
 	zero := flag.Bool("zero", false, "Fill object content with all zeroes instead of random data")
+	label := flag.String("label", "%d-%t", "Test's label, subst %d for current date and %t for current timestamp")
+	outstream := flag.String("o", "report.s3bench", "Path to output report")
+	outtype := flag.String("t", "txt", "Should one of [txt, json, csv, csv+]")
 
 	flag.Parse()
 
+	// Process label
+	{
+		t := time.Now()
+		*label = strings.ReplaceAll(*label, "%d", fmt.Sprintf("%v-%v-%v", t.Year(), int(t.Month()), t.Day()))
+		*label = strings.ReplaceAll(*label, "%t", fmt.Sprintf("%v-%v-%v-%v", t.Hour(), t.Minute(), t.Second(), t.Nanosecond()))
+	}
+
+	flog := startLog(*label)
+	defer flog.Close()
+
 	if *version {
-		fmt.Printf("%s-%s\n", buildDate, gitHash)
-		os.Exit(0)
+		ver := fmt.Sprintf("%s-%s", buildDate, gitHash)
+		fmt.Println(ver)
+		log.Print(ver)
+		log.Fatal("Done")
+	}
+
+	if -1 == findIdxOf([]string{"txt", "json", "csv", "csv+"}, *outtype) {
+		log.Fatalf("output type %v is not supported", *outtype)
+	}
+
+	reportOutput, err := createReportOut(*outtype, *outstream)
+	if err != nil {
+		log.Fatalf("cannot create output file for report. type %v file %v error %v",
+			*outtype, *outstream, err)
 	}
 
 	if *numClients > *numSamples || *numSamples < 1 {
-		fmt.Printf("numClients(%d) needs to be less than numSamples(%d) and greater than 0\n", *numClients, *numSamples)
-		os.Exit(1)
+		log.Fatalf("numClients(%d) needs to be less than numSamples(%d) and greater than 0\n", *numClients, *numSamples)
 	}
 
 	if *endpoint == "" {
-		fmt.Println("You need to specify endpoint(s)")
-		flag.PrintDefaults()
-		os.Exit(1)
+		log.Fatal("You need to specify endpoint(s)")
 	}
 
 	if *deleteAtOnce < 1 {
-		fmt.Println("Cannot delete less than 1 obj at once")
-		os.Exit(1)
+		log.Fatal("Cannot delete less than 1 obj at once")
 	}
 
 	if *numTags < 1 {
-		fmt.Println("-numTags cannot be less than 1")
-		os.Exit(1)
+		log.Fatal("-numTags cannot be less than 1")
 	}
 
 	if *deleteClients < 1 {
-		fmt.Println("-deleteClients cannot be less than 1")
-		os.Exit(1)
+		log.Fatal("-deleteClients cannot be less than 1")
 	}
 
 	if *s3MaxRetries < -1 {
@@ -166,14 +184,13 @@ func main() {
 		responses:        make(chan Resp),
 		numSamples:       uint(*numSamples),
 		numClients:       uint(*numClients),
-		objectSize:       parse_size(*objectSize),
+		objectSize:       parseSize(*objectSize),
 		objectNamePrefix: *objectNamePrefix,
 		bucketName:       *bucketName,
+		profile:          *profile,
 		endpoints:        strings.Split(*endpoint, ","),
-		verbose:          *verbose,
 		headObj:          *headObj,
 		sampleReads:      uint(*sampleReads),
-		jsonOutput:       *jsonOutput,
 		deleteAtOnce:     *deleteAtOnce,
 		putObjTag:        *putObjTag || *getObjTag,
 		getObjTag:        *getObjTag,
@@ -196,8 +213,11 @@ func main() {
 		deleteClients:         *deleteClients,
 		protocolDebug:         *protocolDebug,
 		deleteOnly:            *deleteOnly,
-		multipartSize:         parse_size(*multipartSize),
+		multipartSize:         parseSize(*multipartSize),
 		zero:                  *zero,
+		label:                 *label,
+		outtype:               *outtype,
+		outstream:             *outstream,
 	}
 
 	if params.deleteOnly {
@@ -213,23 +233,23 @@ func main() {
 
 	if !params.skipWrite || params.multipartSize > 0 {
 		// Generate the data from which we will do the writting
-		params.printf("Generating in-memory sample data...\n")
+		log.Print("Generating in-memory sample data...")
 		timeGenData := time.Now()
 		bufferBytes = make([]byte, params.objectSize, params.objectSize)
 		if !params.zero {
 			_, err := rand.Read(bufferBytes)
 			if err != nil {
-				panic("Could not allocate a buffer")
+				log.Panic("Could not allocate a buffer")
 			}
 		}
-		data_hash = sha512.Sum512(bufferBytes)
-		data_hash_base32 = to_b32(data_hash[:])
-		params.printf("Done (%s)\n", time.Since(timeGenData))
+		dataHash = sha512.Sum512(bufferBytes)
+		dataHashBase32 = toB32(dataHash[:])
+		log.Printf("Done (%s)", time.Since(timeGenData))
 	}
 
 	if params.multipartSize > 0 {
-		mp_parts = int32(math.Ceil(float64(params.objectSize) / float64(params.multipartSize)))
-		mp_info = make(map[string]*MpDetails)
+		mpParts = int32(math.Ceil(float64(params.objectSize) / float64(params.multipartSize)))
+		mpInfo = make(map[string]*MpDetails)
 		params.skipWrite = true
 	}
 
@@ -254,174 +274,214 @@ func main() {
 	if params.protocolDebug > 0 {
 		s3LogLevel = aws.LogDebugWithRequestRetries | aws.LogDebugWithRequestErrors
 	}
+
+	var creds *credentials.Credentials
+	if *accessSecret == "" && *accessKey == "" {
+		creds = credentials.NewSharedCredentials("", *profile)
+	} else {
+		creds = credentials.NewStaticCredentials(*accessKey, *accessSecret, "")
+	}
+
 	cfg := &aws.Config{
-		Credentials:      credentials.NewStaticCredentials(*accessKey, *accessSecret, ""),
+		Credentials:      creds,
 		Region:           aws.String(*region),
 		S3ForcePathStyle: aws.Bool(true),
 
 		LogLevel:         &s3LogLevel,
+		Logger:           aws.LoggerFunc(func(args ...interface{}) {
+			log.Print(args)
+		}),
 
 		HTTPClient:            &httpClient,
 		MaxRetries:            aws.Int(*s3MaxRetries),
 		S3Disable100Continue:  aws.Bool(*s3Disable100Continue),
 	}
 
-	if data_hash_base32 == "" {
+	if dataHashBase32 == "" {
 		var err error
-		data_hash_base32, err = params.getObjectHash(cfg)
+		dataHashBase32, err = params.getObjectHash(cfg)
 		if err != nil {
-			panic(fmt.Sprintf("Cannot read object hash:> %v", err))
+			log.Panicf("Cannot read object hash:> %v", err)
 		}
-		var hash_from_b32 []byte
-		hash_from_b32, err = from_b32(data_hash_base32)
+		var hashFromB32 []byte
+		hashFromB32, err = fromB32(dataHashBase32)
 		if err != nil {
-			panic(fmt.Sprintf("Cannot convert object hash:> %v", err))
+			log.Panicf("Cannot convert object hash:> %v", err)
 		}
-		copy(data_hash[:], hash_from_b32)
+		copy(dataHash[:], hashFromB32)
 	}
 
-	bucket_created := params.prepareBucket(cfg)
+	bucketCreated := params.prepareBucket(cfg)
 
 	params.StartClients(cfg)
 
 	testResults := []Result{}
 
 	if !params.skipWrite {
-		params.printf("Running %s test...\n", opWrite)
+		log.Printf("Running %s test...\n", opWrite)
+		progress = startTest("Write", params.spo(opWrite))
 		testResults = append(testResults, params.Run(opWrite))
 	}
 	if params.multipartSize > 0 {
-		params.printf("Running %s test...\n", opMpUpl)
+		log.Printf("Running %s test...\n", opMpUpl)
+		progress = startTest("Multipart", params.spo(opMpUpl))
 		testResults = append(testResults, params.Run(opMpUpl))
 	}
 	if params.putObjTag {
-		params.printf("Running %s test...\n", opPutObjTag)
+		log.Printf("Running %s test...\n", opPutObjTag)
+		progress = startTest("PutObjTag", params.spo(opPutObjTag))
 		testResults = append(testResults, params.Run(opPutObjTag))
 	}
 	if params.getObjTag {
-		params.printf("Running %s test...\n", opGetObjTag)
+		log.Printf("Running %s test...\n", opGetObjTag)
+		progress = startTest("GetObjTag", params.spo(opGetObjTag))
 		testResults = append(testResults, params.Run(opGetObjTag))
 	}
 	if params.headObj {
-		params.printf("Running %s test...\n", opHeadObj)
+		log.Printf("Running %s test...\n", opHeadObj)
+		progress = startTest("HeadObj", params.spo(opHeadObj))
 		testResults = append(testResults, params.Run(opHeadObj))
 	}
 	if params.readObj {
-		params.printf("Running %s test...\n", opRead)
+		log.Printf("Running %s test...\n", opRead)
+		progress = startTest("Read", params.spo(opRead))
 		testResults = append(testResults, params.Run(opRead))
 	}
 	if params.validate {
-		params.printf("Running %s test...\n", opValidate)
+		log.Printf("Running %s test...\n", opValidate)
+		progress = startTest("Validate", params.spo(opValidate))
 		testResults = append(testResults, params.Run(opValidate))
 	}
 
-	// Do cleanup if required
-	if !*skipCleanup {
-		params.printf("Cleaning up %d objects...\n", *numSamples)
+	if !*skipCleanup && params.putObjTag {
+		log.Printf("Cleaning up tags for %d objects", *numSamples)
+		progress = startTest("Delete Tags", params.numSamples)
+
+		delOpCh := make(chan DeleteReq, 2 * params.numClients)
+		delRespCh := make(chan DeleteResp, params.numClients)
+
+		for i := uint(0); i < params.numClients; i++ {
+			go params.delClient(cfg, delOpCh, delRespCh)
+		}
+
+		go params.submitDelTags(delOpCh)
+
+		for i := uint(0); i < params.numSamples; i++ {
+			dresp := <- delRespCh
+			progress.updateProgress(1, nil2int(dresp.err))
+			log.Printf("%s done in %v | err %v\n", dresp.opName, dresp.dur, dresp.err)
+		}
+
+		close(delOpCh)
+		close(delRespCh)
+	}
+
+	if !*skipCleanup || params.deleteOnly {
+		log.Printf("Cleaning up %d objects", *numSamples)
+
+		dltpars := uint(math.Ceil(float64(params.numSamples) / float64(params.deleteAtOnce)))
+		progress = startTest("Delete Objs", dltpars)
 
 		delOpCh := make(chan DeleteReq, 2 * params.deleteClients)
 		delRespCh := make(chan DeleteResp, params.deleteClients)
-		doDel := func() {
-			svc := s3.New(session.New(), cfg)
-			for dval := range delOpCh {
-				delStartTime := time.Now()
-				var derr error
-				switch r := dval.dltReq.(type) {
-				case *s3.DeleteObjectTaggingInput:
-					_, derr = svc.DeleteObjectTagging(r)
-
-				case *s3.DeleteObjectsInput:
-					_, derr = svc.DeleteObjects(r)
-
-				default:
-					panic("Developer error")
-				}
-
-				delRespCh <- DeleteResp{
-					opName: dval.opName,
-					dur: time.Since(delStartTime),
-					err: derr,
-				}
-			}
-		}
 
 		for i := 0; i < params.deleteClients; i++ {
-			go doDel()
+			go params.delClient(cfg, delOpCh, delRespCh)
 		}
 
-		if params.putObjTag {
-			go func() {
-				for i := 0; i < *numSamples; i++ {
-					key := genObjName(params.objectNamePrefix, data_hash_base32, uint(i))
-					deleteObjectTaggingInput := &s3.DeleteObjectTaggingInput{
-						Bucket: aws.String(*bucketName),
-						Key:    key,
-					}
-					delOpCh <- DeleteReq{
-						opName: fmt.Sprintf("Delete tags for %v/%v", *bucketName, *key),
-						dltReq: deleteObjectTaggingInput,
-					}
-				}
-			}()
+		go params.submitDelObjs(delOpCh)
 
-			for i := 0; i < *numSamples; i++ {
-				dresp := <- delRespCh
-				params.printf("%s done in %v | err %v\n", dresp.opName, dresp.dur, dresp.err)
-			}
-		}
-
-		dltpars := *numSamples / params.deleteAtOnce
-		if *numSamples % params.deleteAtOnce != 0 {
-			dltpars++
-		}
-		keyList := make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
-
-		go func() {
-			for i := 0; i < *numSamples; i++ {
-				key := aws.String("")
-				if params.deleteOnly {
-					key = aws.String(fmt.Sprintf("%s_%d", params.objectNamePrefix, uint(i)))
-				} else {
-					key = genObjName(params.objectNamePrefix, data_hash_base32, uint(i))
-				}
-				bar := s3.ObjectIdentifier{ Key: key, }
-				keyList = append(keyList, &bar)
-				if len(keyList) == params.deleteAtOnce || i == *numSamples-1 {
-					dltpar := &s3.DeleteObjectsInput{
-						Bucket: aws.String(*bucketName),
-						Delete: &s3.Delete{
-							Objects: keyList}}
-
-					delOpCh <- DeleteReq{
-						opName: fmt.Sprintf("Deleting a batch of %d objects in range {%d, %d}... ", len(keyList), i-len(keyList)+1, i),
-						dltReq: dltpar,
-					}
-
-					keyList = make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
-				}
-			}
-		}()
-
-		for i := 0; i < dltpars; i++ {
+		for i := uint(0); i < dltpars; i++ {
 			dresp := <- delRespCh
-			params.printf("%s done in %v | err %v\n", dresp.opName, dresp.dur, dresp.err)
+			progress.updateProgress(1, nil2int(dresp.err))
+			log.Printf("%s done in %v | err %v\n", dresp.opName, dresp.dur, dresp.err)
 		}
 
-		if bucket_created {
-			svc := s3.New(session.New(), cfg)
-			params.printf("Deleting bucket...\n")
-			dltpar := &s3.DeleteBucketInput{
-				Bucket: aws.String(*bucketName)}
-			_, err := svc.DeleteBucket(dltpar)
-			if err == nil {
-				params.printf("Succeeded\n")
-			} else {
-				params.printf("Failed (%v)\n", err)
-			}
-		}
+		close(delOpCh)
+		close(delRespCh)
 	}
 
-	params.reportPrint(params.reportPrepare(testResults))
+	if !*skipCleanup && bucketCreated {
+		delStartTime := time.Now()
+		svc := s3.New(session.New(), cfg)
+		log.Printf("Deleting bucket...\n")
+		dltpar := &s3.DeleteBucketInput{
+			Bucket: aws.String(*bucketName)}
+		_, err := svc.DeleteBucket(dltpar)
+		optDur := time.Since(delStartTime)
+		log.Printf("DeleteBucket done in %v | err %v\n", optDur, err)
+	}
+
+	params.reportPrint(testResults, reportOutput)
+	log.Print("Done")
+}
+
+func (params *Params) delClient(
+	cfg *aws.Config, delOpCh chan DeleteReq, delRespCh chan DeleteResp) {
+
+	svc := s3.New(session.New(), cfg)
+	for dval := range delOpCh {
+		delStartTime := time.Now()
+		var derr error
+		switch r := dval.dltReq.(type) {
+		case *s3.DeleteObjectTaggingInput:
+			_, derr = svc.DeleteObjectTagging(r)
+
+		case *s3.DeleteObjectsInput:
+			_, derr = svc.DeleteObjects(r)
+
+		default:
+			log.Panic("Developer error")
+		}
+
+		delRespCh <- DeleteResp{
+			opName: dval.opName,
+			dur: time.Since(delStartTime),
+			err: derr,
+		}
+	}
+}
+
+func (params *Params) submitDelTags(delOpCh chan DeleteReq) {
+	for i := uint(0); i < params.numSamples; i++ {
+		key := genObjName(params.objectNamePrefix, dataHashBase32, uint(i))
+		deleteObjectTaggingInput := &s3.DeleteObjectTaggingInput{
+			Bucket: aws.String(params.bucketName),
+			Key:    key,
+		}
+		delOpCh <- DeleteReq{
+			opName: fmt.Sprintf("Delete tags for %v/%v", params.bucketName, *key),
+			dltReq: deleteObjectTaggingInput,
+		}
+	}
+}
+
+func (params *Params) submitDelObjs(delOpCh chan DeleteReq) {
+	keyList := make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
+	for i := 0; i < int(params.numSamples); i++ {
+		key := aws.String("")
+		if params.deleteOnly {
+			key = aws.String(fmt.Sprintf("%s_%d", params.objectNamePrefix, uint(i)))
+		} else {
+			key = genObjName(params.objectNamePrefix, dataHashBase32, uint(i))
+		}
+		bar := s3.ObjectIdentifier{ Key: key, }
+		keyList = append(keyList, &bar)
+		if len(keyList) == params.deleteAtOnce || i == int(params.numSamples)-1 {
+			dltpar := &s3.DeleteObjectsInput{
+				Bucket: aws.String(params.bucketName),
+				Delete: &s3.Delete{
+					Objects: keyList}}
+
+			delOpCh <- DeleteReq{
+				opName: fmt.Sprintf("Deleting a batch of %d objects in range {%d, %d}... ",
+					len(keyList), i-len(keyList)+1, i),
+				dltReq: dltpar,
+			}
+
+			keyList = make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
+		}
+	}
 }
 
 func (params *Params) Run(op string) Result {
@@ -435,6 +495,7 @@ func (params *Params) Run(op string) Result {
 	result := Result{opDurations: make([]float64, 0, opSamples), operation: op}
 	for i := uint(0); i < opSamples; i++ {
 		resp := <-params.responses
+		progress.updateProgress(1, nil2int(resp.err))
 		if resp.err != nil {
 			errStr := fmt.Sprintf("%v(%d) completed in %0.2fs with error %s",
 				op, i+1, resp.duration.Seconds(), resp.err)
@@ -444,7 +505,7 @@ func (params *Params) Run(op string) Result {
 			result.opDurations = append(result.opDurations, resp.duration.Seconds())
 			result.opTtfb = append(result.opTtfb, resp.ttfb.Seconds())
 		}
-		params.printf("operation %s(%d) completed in %.2fs|%s\n", op, i+1, resp.duration.Seconds(), resp.err)
+		log.Printf("operation %s(%d) completed in %.2fs|%s\n", op, i+1, resp.duration.Seconds(), resp.err)
 	}
 
 	result.totalDuration = time.Since(startTime)
@@ -458,7 +519,7 @@ func (params *Params) submitLoad(op string) {
 	bucket := aws.String(params.bucketName)
 	opSamples := params.spo(op)
 	for i := uint(0); i < opSamples; i++ {
-		key := genObjName(params.objectNamePrefix, data_hash_base32, i % params.numSamples)
+		key := genObjName(params.objectNamePrefix, dataHashBase32, i % params.numSamples)
 		if op == opWrite {
 			params.requests <- Req{
 				top: op,
@@ -499,11 +560,11 @@ func (params *Params) submitLoad(op string) {
 		} else if op == opPutObjTag {
 			tagSet := make([]*s3.Tag, 0, params.numTags)
 			for iTag := uint(0); iTag < params.numTags; iTag++ {
-				tag_name := fmt.Sprintf("%s%d", params.tagNamePrefix, iTag)
-				tag_value := fmt.Sprintf("%s%d", params.tagValPrefix, iTag)
+				tagName := fmt.Sprintf("%s%d", params.tagNamePrefix, iTag)
+				tagValue := fmt.Sprintf("%s%d", params.tagValPrefix, iTag)
 				tagSet = append(tagSet, &s3.Tag {
-						Key:   &tag_name,
-						Value: &tag_value,
+						Key:   &tagName,
+						Value: &tagValue,
 						})
 			}
 			params.requests <- Req{
@@ -523,7 +584,7 @@ func (params *Params) submitLoad(op string) {
 				},
 			}
 		} else {
-			panic("Developer error")
+			log.Panic("Developer error")
 		}
 	}
 }
@@ -535,31 +596,31 @@ func (params *Params) StartClients(cfg *aws.Config) {
 	}
 }
 
-func (params *Params) genMpUpload(uplId *string, key *string) {
+func (params *Params) genMpUpload(uplID *string, key *string) {
 	bucket := aws.String(params.bucketName)
-	for i := int64(0); i < int64(mp_parts); i++ {
-		part_num := i + 1
+	for i := int64(0); i < int64(mpParts); i++ {
+		partNum := i + 1
 		low := i * params.multipartSize
-		high := IntMin((i + 1) * params.multipartSize, int64(len(bufferBytes)))
+		high := intMin((i + 1) * params.multipartSize, int64(len(bufferBytes)))
 		params.requests <- Req{
 			top: opMpUpl,
 			key: *key,
 			req : &s3.UploadPartInput{
 				Bucket: bucket,
 				Key:    key,
-				PartNumber: &part_num,
-				UploadId: uplId,
+				PartNumber: &partNum,
+				UploadId: uplID,
 				Body:   bytes.NewReader(bufferBytes[low : high]),
 			},
 		}
 	}
 }
 
-func (params *Params) genCompleteUpload(uplId *string, key *string) {
+func (params *Params) genCompleteUpload(uplID *string, key *string) {
 	bucket := aws.String(params.bucketName)
 	parts := s3.CompletedMultipartUpload{}
-	for i := int64(1); i <= int64(mp_parts); i++ {
-		eTag, _ := mp_info[*key].parts_tags.Load(i)
+	for i := int64(1); i <= int64(mpParts); i++ {
+		eTag, _ := mpInfo[*key].partsTags.Load(i)
 		sETag := eTag.(string)
 		pn := i
 		p := s3.CompletedPart{PartNumber: &pn, ETag: &sETag,}
@@ -571,7 +632,7 @@ func (params *Params) genCompleteUpload(uplId *string, key *string) {
 		req : &s3.CompleteMultipartUploadInput{
 			Bucket: bucket,
 			Key:    key,
-			UploadId: uplId,
+			UploadId: uplID,
 			MultipartUpload: &parts,
 		},
 	}
@@ -585,10 +646,10 @@ func (params *Params) startClient(cfg *aws.Config) {
 		var ttfb time.Duration
 		var err error
 		var numBytes int64 = 0
-		cur_op := request.top
-		cur_key := request.key
-		var hasher hash.Hash = nil
-		req_fin := true
+		curOp := request.top
+		curKey := request.key
+		var hasher hash.Hash
+		reqFin := true
 
 		switch r := request.req.(type) {
 		case *s3.PutObjectInput:
@@ -605,9 +666,9 @@ func (params *Params) startClient(cfg *aws.Config) {
 			err = req.Send()
 			ttfb = time.Since(putStartTime)
 			if err == nil {
-				if cur_op == opRead {
+				if curOp == opRead {
 					numBytes, err = io.Copy(ioutil.Discard, resp.Body)
-				} else if cur_op == opValidate {
+				} else if curOp == opValidate {
 					hasher = sha512.New()
 					numBytes, err = io.Copy(hasher, resp.Body)
 				}
@@ -617,11 +678,11 @@ func (params *Params) startClient(cfg *aws.Config) {
 			} else if numBytes != params.objectSize {
 				err = fmt.Errorf("expected object length %d, actual %d", params.objectSize, numBytes)
 			}
-			if cur_op == opValidate && err == nil {
-				cur_sum := hasher.Sum(nil)
-				if !bytes.Equal(cur_sum, data_hash[:]) {
-					cur_sum_enc := to_b32(cur_sum[:])
-					err = fmt.Errorf("Read data checksum %s is not eq to write data checksum %s", cur_sum_enc, data_hash_base32)
+			if curOp == opValidate && err == nil {
+				curSum := hasher.Sum(nil)
+				if !bytes.Equal(curSum, dataHash[:]) {
+					curSumEnc := toB32(curSum[:])
+					err = fmt.Errorf("Read data checksum %s is not eq to write data checksum %s", curSumEnc, dataHashBase32)
 				}
 			}
 		case *s3.HeadObjectInput:
@@ -643,14 +704,14 @@ func (params *Params) startClient(cfg *aws.Config) {
 			err = req.Send()
 			ttfb = time.Since(putStartTime)
 		case *s3.CreateMultipartUploadInput:
-			mp_info[cur_key] = &MpDetails{start_time: putStartTime, parts_uploaded: 0, ttfb: 0, upl_id: nil,}
+			mpInfo[curKey] = &MpDetails{startTime: putStartTime, partsUploaded: 0, ttfb: 0, uplID: nil,}
 			req, resp := svc.CreateMultipartUploadRequest(r)
 			err = req.Send()
 			if err == nil {
-				mp_info[cur_key].ttfb = time.Since(putStartTime)
-				mp_info[cur_key].upl_id = resp.UploadId
+				mpInfo[curKey].ttfb = time.Since(putStartTime)
+				mpInfo[curKey].uplID = resp.UploadId
 				go params.genMpUpload(resp.UploadId, resp.Key)
-				req_fin = false
+				reqFin = false
 			}
 			numBytes = 0
 			ttfb = time.Since(putStartTime)
@@ -658,27 +719,27 @@ func (params *Params) startClient(cfg *aws.Config) {
 			req, resp := svc.UploadPartRequest(r)
 			err = req.Send()
 			if err == nil {
-				req_fin = false
-				mp_info[cur_key].parts_tags.Store(*r.PartNumber, *resp.ETag)
-				cval := atomic.AddInt32(&mp_info[cur_key].parts_uploaded, 1)
-				if cval == mp_parts {
-					go params.genCompleteUpload(mp_info[cur_key].upl_id, &cur_key)
+				reqFin = false
+				mpInfo[curKey].partsTags.Store(*r.PartNumber, *resp.ETag)
+				cval := atomic.AddInt32(&mpInfo[curKey].partsUploaded, 1)
+				if cval == mpParts {
+					go params.genCompleteUpload(mpInfo[curKey].uplID, &curKey)
 				}
 			}
 			numBytes = params.multipartSize
-			putStartTime = mp_info[cur_key].start_time
-			ttfb = mp_info[cur_key].ttfb
+			putStartTime = mpInfo[curKey].startTime
+			ttfb = mpInfo[curKey].ttfb
 		case *s3.CompleteMultipartUploadInput:
 			req, _ := svc.CompleteMultipartUploadRequest(r)
 			err = req.Send()
-			putStartTime = mp_info[cur_key].start_time
-			ttfb = mp_info[cur_key].ttfb
+			putStartTime = mpInfo[curKey].startTime
+			ttfb = mpInfo[curKey].ttfb
 			numBytes = params.objectSize
 		default:
-			panic("Developer error")
+			log.Panic("Developer error")
 		}
 
-		if req_fin {
+		if reqFin {
 			params.responses <- Resp{err, time.Since(putStartTime), numBytes, ttfb}
 		}
 	}

@@ -194,14 +194,15 @@ func (params Params) reportPrint(tests []Result, outf *os.File) {
 	fltr := strings.Split(params.reportFormat, ";")
 	report = reportFilter(report, fltr)
 
+	// Print final report to stdout
+	mapPrint(report, fltr, "", os.Stdout)
+
 	if params.outtype == "json" {
 		b, err = json.Marshal(report)
 		if err != nil {
 			log.Printf("Cannot generate JSON report %v", err)
 		}
 		fmt.Fprintln(outf, string(b))
-		return
-
 	}
 
 	if params.outtype == "csv" {
@@ -210,10 +211,11 @@ func (params Params) reportPrint(tests []Result, outf *os.File) {
 
 	if strings.HasPrefix(params.outtype, "csv") {
 		fmt.Fprintln(outf, csvValues(report, fltr, "\t", "|"))
-		return
 	}
 
-	mapPrint(report, fltr, "", outf)
+	if params.outtype == "txt" {
+		mapPrint(report, fltr, "", outf)
+	}
 }
 
 func (r Result) report() map[string]interface{} {
