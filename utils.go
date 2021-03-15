@@ -15,7 +15,7 @@ import (
 
 func startLog(lbl string) *os.File {
 	flog, err := os.OpenFile(fmt.Sprintf("s3bench-%s.log", lbl),
-		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Panic(err)
 	}
