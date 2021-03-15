@@ -31,7 +31,7 @@ func (prg *ProgressNotifier) showProgress() {
 		statusStr = fmt.Sprintf("%s | %d/%d (%.2f%%) | time %v eta %v | errors %d",
 			prg.name,
 			prg.done, prg.tbd, donePrc * 100,
-			time.Duration(curDur) * time.Second, time.Duration(eta) * time.Second,
+			time.Duration(curDur) * time.Second, time.Duration(eta - curDur) * time.Second,
 			prg.errors)
 	} else {
 		statusStr = fmt.Sprintf("%s done in %v with %d errors",

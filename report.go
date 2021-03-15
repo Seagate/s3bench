@@ -206,11 +206,11 @@ func (params Params) reportPrint(tests []Result, outf *os.File) {
 	}
 
 	if params.outtype == "csv" {
-		fmt.Fprintln(outf, csvHeaders(report, fltr, "\t"))
+		fmt.Fprintln(outf, csvHeaders(report, fltr, ","))
 	}
 
 	if strings.HasPrefix(params.outtype, "csv") {
-		fmt.Fprintln(outf, csvValues(report, fltr, "\t", "|"))
+		fmt.Fprintln(outf, csvValues(report, fltr, ",", "|"))
 	}
 
 	if params.outtype == "txt" {
