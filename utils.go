@@ -104,14 +104,14 @@ func avg(dt []float64) float64 {
 	return sm / ln
 }
 
-func genObjName(pref string, hsh string, idx uint, cp_idx int) *string {
+func genObjName(pref string, hsh string, idx uint, cpIdx int) *string {
 	ret := pref
 	if hsh != "" {
 		ret = fmt.Sprintf("%s_%s", pref, hsh)
 	}
 	ret = fmt.Sprintf("%s_%d", ret, idx)
-	if cp_idx >= 0 {
-		ret = fmt.Sprintf("%s_%d", ret, cp_idx)
+	if cpIdx >= 0 {
+		ret = fmt.Sprintf("%s_%d", ret, cpIdx)
 	}
 	return aws.String(ret)
 }
