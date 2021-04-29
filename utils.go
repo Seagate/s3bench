@@ -53,9 +53,32 @@ func parseSize(sz string) int64 {
 	return val * mult
 }
 
-// spo - samples per operation
-func (params Params) spo(op string) uint {
-	if op == opWrite || op == opPutObjTag || op == opValidate || op == opMpUpl {
+func getSampleIndex(smpl string) string {
+	re := regexp.MustCompile(`((?:_\d+){1,2})$`)
+	mm := re.FindStringSubmatch(smpl)
+	if len(mm) == 2 {
+		return mm[1]
+	}
+	return ""
+}
+
+func (params Params) totalOps(op string) uint {
+	if op == opWrite || op == opMpUpl {
+		return params.numSamples
+	} else if op == opCopyObj {
+		return params.numSamples * uint(params.copies)
+	} else if op == opPutObjTag || op == opValidate || op == opDelObj || op == opDelTag {
+		return params.numSamples * uint(params.copies + 1)
+	}
+
+	return params.numSamples * params.sampleReads * uint(params.copies + 1)
+}
+
+func (params Params) samplesWOcopies(op string) uint {
+	if op == opWrite || op == opPutObjTag || op == opValidate ||
+		op == opMpUpl || op == opDelObj || op == opDelTag {
+		return params.numSamples
+	} else if op == opCopyObj {
 		return params.numSamples
 	}
 
@@ -81,8 +104,16 @@ func avg(dt []float64) float64 {
 	return sm / ln
 }
 
-func genObjName(pref string, hsh string, idx uint) *string {
-	return aws.String(fmt.Sprintf("%s_%s_%d", pref, hsh, idx))
+func genObjName(pref string, hsh string, idx uint, cp_idx int) *string {
+	ret := pref
+	if hsh != "" {
+		ret = fmt.Sprintf("%s_%s", pref, hsh)
+	}
+	ret = fmt.Sprintf("%s_%d", ret, idx)
+	if cp_idx >= 0 {
+		ret = fmt.Sprintf("%s_%d", ret, cp_idx)
+	}
+	return aws.String(ret)
 }
 
 func (params *Params) getObjectHash(cfg *aws.Config) (string, error){

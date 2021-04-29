@@ -81,7 +81,7 @@ func main() {
 	tagNamePrefix := flag.String("tagNamePrefix", "tag_name_", "prefix of the tag name that will be used")
 	tagValPrefix := flag.String("tagValPrefix", "tag_val_", "prefix of the tag value that will be used")
 	version := flag.Bool("version", false, "print version info")
-	reportFormat := flag.String("reportFormat", "Parameters:label;Parameters:numClients;Parameters:objectSize (MB);-Parameters:numSamples;-Parameters:sampleReads;-Parameters:readObj;-Parameters:headObj;-Parameters:putObjTag;-Parameters:getObjTag;-Parameters:TLSHandshakeTimeout;-Parameters:bucket;-Parameters:connectTimeout;-Parameters:deleteAtOnce;-Parameters:deleteClients;-Parameters:deleteOnly;-Parameters:endpoints;-Parameters:httpClientTimeout;-Parameters:idleConnTimeout;-Parameters:maxIdleConnsPerHost;-Parameters:multipartSize;-Parameters:numTags;-Parameters:objectNamePrefix;-Parameters:protocolDebug;-Parameters:reportFormat;-Parameters:responseHeaderTimeout;-Parameters:s3Disable100Continue;-Parameters:profile;-Parameters:s3MaxRetries;-Parameters:skipRead;-Parameters:skipWrite;-Parameters:tagNamePrefix;-Parameters:tagValPrefix;-Parameters:validate;-Parameters:zero;-Parameters:outstream;-Parameters:outtype;Tests:Operation;Tests:RPS;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Total Duration (s);Tests:Total Transferred (MB);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;-Tests:Errors;-Version;", "rearrange output fields")
+	reportFormat := flag.String("reportFormat", "Parameters:label;Parameters:numClients;Parameters:objectSize (MB);Parameters:copies;-Parameters:numSamples;-Parameters:sampleReads;-Parameters:readObj;-Parameters:headObj;-Parameters:putObjTag;-Parameters:getObjTag;-Parameters:TLSHandshakeTimeout;-Parameters:bucket;-Parameters:connectTimeout;-Parameters:deleteAtOnce;-Parameters:deleteClients;-Parameters:deleteOnly;-Parameters:endpoints;-Parameters:httpClientTimeout;-Parameters:idleConnTimeout;-Parameters:maxIdleConnsPerHost;-Parameters:multipartSize;-Parameters:numTags;-Parameters:objectNamePrefix;-Parameters:protocolDebug;-Parameters:reportFormat;-Parameters:responseHeaderTimeout;-Parameters:s3Disable100Continue;-Parameters:profile;-Parameters:s3MaxRetries;-Parameters:skipRead;-Parameters:skipWrite;-Parameters:tagNamePrefix;-Parameters:tagValPrefix;-Parameters:validate;-Parameters:zero;-Parameters:outstream;-Parameters:outtype;Tests:Operation;Tests:RPS;Tests:Total Requests Count;Tests:Errors Count;Tests:Total Throughput (MB/s);Tests:Total Duration (s);Tests:Total Transferred (MB);Tests:Duration Max;Tests:Duration Avg;Tests:Duration Min;Tests:Ttfb Max;Tests:Ttfb Avg;Tests:Ttfb Min;-Tests:Duration 25th-ile;-Tests:Duration 50th-ile;-Tests:Duration 75th-ile;-Tests:Ttfb 25th-ile;-Tests:Ttfb 50th-ile;-Tests:Ttfb 75th-ile;-Tests:Errors;-Version;", "rearrange output fields")
 	validate := flag.Bool("validate", false, "validate stored data")
 	skipWrite := flag.Bool("skipWrite", false, "do not run Write test")
 	skipRead := flag.Bool("skipRead", false, "do not run Read test")
@@ -101,6 +101,7 @@ func main() {
 	label := flag.String("label", "%d-%t", "Test's label, subst %d for current date and %t for current timestamp")
 	outstream := flag.String("o", "report.s3bench", "Path to output report")
 	outtype := flag.String("t", "txt", "Should one of [txt, json, csv, csv+]")
+	copies := flag.Int("copies", 0, "Extend enable op to operate on copies")
 
 	flag.Parse()
 
@@ -178,6 +179,11 @@ func main() {
 		*responseHeaderTimeout = 0
 	}
 
+	if *copies < 0 {
+		*copies = 0
+	}
+
+
 	// Setup and print summary of the accepted parameters
 	params := Params{
 		requests:         make(chan Req),
@@ -218,6 +224,7 @@ func main() {
 		label:                 *label,
 		outtype:               *outtype,
 		outstream:             *outstream,
+		copies:                *copies,
 	}
 
 	if params.deleteOnly {
@@ -319,43 +326,49 @@ func main() {
 
 	if !params.skipWrite {
 		log.Printf("Running %s test...\n", opWrite)
-		progress = startTest("Write", params.spo(opWrite))
+		progress = startTest("Write", params.totalOps(opWrite))
 		testResults = append(testResults, params.Run(opWrite))
 	}
 	if params.multipartSize > 0 {
 		log.Printf("Running %s test...\n", opMpUpl)
-		progress = startTest("Multipart", params.spo(opMpUpl))
+		progress = startTest("Multipart", params.totalOps(opMpUpl))
 		testResults = append(testResults, params.Run(opMpUpl))
+	}
+	if (!params.skipWrite || params.multipartSize > 0) && params.copies > 0 {
+		log.Printf("Running %s test...\n", opCopyObj)
+		progress = startTest("CopyObject", params.totalOps(opCopyObj))
+		testResults = append(testResults, params.Run(opCopyObj))
 	}
 	if params.putObjTag {
 		log.Printf("Running %s test...\n", opPutObjTag)
-		progress = startTest("PutObjTag", params.spo(opPutObjTag))
+		progress = startTest("PutObjTag", params.totalOps(opPutObjTag))
 		testResults = append(testResults, params.Run(opPutObjTag))
 	}
 	if params.getObjTag {
 		log.Printf("Running %s test...\n", opGetObjTag)
-		progress = startTest("GetObjTag", params.spo(opGetObjTag))
+		progress = startTest("GetObjTag", params.totalOps(opGetObjTag))
 		testResults = append(testResults, params.Run(opGetObjTag))
 	}
 	if params.headObj {
 		log.Printf("Running %s test...\n", opHeadObj)
-		progress = startTest("HeadObj", params.spo(opHeadObj))
+		progress = startTest("HeadObj", params.totalOps(opHeadObj))
 		testResults = append(testResults, params.Run(opHeadObj))
 	}
 	if params.readObj {
 		log.Printf("Running %s test...\n", opRead)
-		progress = startTest("Read", params.spo(opRead))
+		progress = startTest("Read", params.totalOps(opRead))
 		testResults = append(testResults, params.Run(opRead))
 	}
 	if params.validate {
 		log.Printf("Running %s test...\n", opValidate)
-		progress = startTest("Validate", params.spo(opValidate))
+		progress = startTest("Validate", params.totalOps(opValidate))
 		testResults = append(testResults, params.Run(opValidate))
 	}
 
 	if !*skipCleanup && params.putObjTag {
-		log.Printf("Cleaning up tags for %d objects", *numSamples)
-		progress = startTest("Delete Tags", params.numSamples)
+		numOfOps := params.totalOps(opDelTag)
+		log.Printf("Cleaning up tags for %d objects", numOfOps)
+		progress = startTest("Delete Tags", numOfOps)
 
 		delOpCh := make(chan DeleteReq, 2 * params.numClients)
 		delRespCh := make(chan DeleteResp, params.numClients)
@@ -366,7 +379,7 @@ func main() {
 
 		go params.submitDelTags(delOpCh)
 
-		for i := uint(0); i < params.numSamples; i++ {
+		for i := uint(0); i < numOfOps; i++ {
 			dresp := <- delRespCh
 			progress.updateProgress(1, nil2int(dresp.err))
 			log.Printf("%s done in %v | err %v\n", dresp.opName, dresp.dur, dresp.err)
@@ -377,9 +390,10 @@ func main() {
 	}
 
 	if !*skipCleanup || params.deleteOnly {
-		log.Printf("Cleaning up %d objects", *numSamples)
+		numOfOps := params.totalOps(opDelObj)
+		log.Printf("Cleaning up %d objects", numOfOps)
 
-		dltpars := uint(math.Ceil(float64(params.numSamples) / float64(params.deleteAtOnce)))
+		dltpars := uint(math.Ceil(float64(numOfOps) / float64(params.deleteAtOnce)))
 		progress = startTest("Delete Objs", dltpars)
 
 		delOpCh := make(chan DeleteReq, 2 * params.deleteClients)
@@ -443,43 +457,48 @@ func (params *Params) delClient(
 }
 
 func (params *Params) submitDelTags(delOpCh chan DeleteReq) {
-	for i := uint(0); i < params.numSamples; i++ {
-		key := genObjName(params.objectNamePrefix, dataHashBase32, uint(i))
-		deleteObjectTaggingInput := &s3.DeleteObjectTaggingInput{
-			Bucket: aws.String(params.bucketName),
-			Key:    key,
-		}
-		delOpCh <- DeleteReq{
-			opName: fmt.Sprintf("Delete tags for %v/%v", params.bucketName, *key),
-			dltReq: deleteObjectTaggingInput,
+	for i := uint(0); i < params.samplesWOcopies(opDelTag); i++ {
+		for c := 0; c <= params.copies; c++ {
+			key := genObjName(params.objectNamePrefix, dataHashBase32, uint(i), c - 1)
+			deleteObjectTaggingInput := &s3.DeleteObjectTaggingInput{
+				Bucket: aws.String(params.bucketName),
+				Key:    key,
+			}
+			delOpCh <- DeleteReq{
+				opName: fmt.Sprintf("Delete tags for %v/%v", params.bucketName, *key),
+				dltReq: deleteObjectTaggingInput,
+			}
 		}
 	}
 }
 
 func (params *Params) submitDelObjs(delOpCh chan DeleteReq) {
 	keyList := make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
-	for i := 0; i < int(params.numSamples); i++ {
-		key := aws.String("")
-		if params.deleteOnly {
-			key = aws.String(fmt.Sprintf("%s_%d", params.objectNamePrefix, uint(i)))
-		} else {
-			key = genObjName(params.objectNamePrefix, dataHashBase32, uint(i))
-		}
-		bar := s3.ObjectIdentifier{ Key: key, }
-		keyList = append(keyList, &bar)
-		if len(keyList) == params.deleteAtOnce || i == int(params.numSamples)-1 {
-			dltpar := &s3.DeleteObjectsInput{
-				Bucket: aws.String(params.bucketName),
-				Delete: &s3.Delete{
-					Objects: keyList}}
-
-			delOpCh <- DeleteReq{
-				opName: fmt.Sprintf("Deleting a batch of %d objects in range {%d, %d}... ",
-					len(keyList), i-len(keyList)+1, i),
-				dltReq: dltpar,
+	for i := 0; i < int(params.samplesWOcopies(opDelObj)); i++ {
+		for c := 0; c <= params.copies; c++ {
+			key := aws.String("")
+			cpi := c - 1
+			hsh := dataHashBase32
+			if params.deleteOnly {
+				hsh = ""
 			}
+			key = genObjName(params.objectNamePrefix, hsh, uint(i), cpi)
+			bar := s3.ObjectIdentifier{ Key: key, }
+			keyList = append(keyList, &bar)
+			if len(keyList) == params.deleteAtOnce || (i == int(params.samplesWOcopies(opDelObj))-1 && c == params.copies) {
+				dltpar := &s3.DeleteObjectsInput{
+					Bucket: aws.String(params.bucketName),
+					Delete: &s3.Delete{
+						Objects: keyList}}
 
-			keyList = make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
+				delOpCh <- DeleteReq{
+					opName: fmt.Sprintf("Deleting a batch of %d objects in range {%s, %s}... ",
+						len(keyList), getSampleIndex(*keyList[0].Key), getSampleIndex(*keyList[len(keyList)-1].Key)),
+					dltReq: dltpar,
+				}
+
+				keyList = make([]*s3.ObjectIdentifier, 0, params.deleteAtOnce)
+			}
 		}
 	}
 }
@@ -490,7 +509,7 @@ func (params *Params) Run(op string) Result {
 	// Start submitting load requests
 	go params.submitLoad(op)
 
-	opSamples := params.spo(op)
+	opSamples := params.totalOps(op)
 	// Collect and aggregate stats for completed requests
 	result := Result{opDurations: make([]float64, 0, opSamples), operation: op}
 	for i := uint(0); i < opSamples; i++ {
@@ -514,12 +533,29 @@ func (params *Params) Run(op string) Result {
 	return result
 }
 
-// Create an individual load request and submit it to the client queue
-func (params *Params) submitLoad(op string) {
+func (params *Params) submitCopyObj() {
 	bucket := aws.String(params.bucketName)
-	opSamples := params.spo(op)
-	for i := uint(0); i < opSamples; i++ {
-		key := genObjName(params.objectNamePrefix, dataHashBase32, i % params.numSamples)
+	for i := uint(0); i < params.numSamples; i++ {
+		srcKey := aws.String(*bucket + "/" + *genObjName(params.objectNamePrefix, dataHashBase32, i, -1))
+		for c := 0; c < params.copies; c++ {
+			key := genObjName(params.objectNamePrefix, dataHashBase32, i, c)
+			params.requests <- Req{
+				top: opCopyObj,
+				key: *key,
+				req : &s3.CopyObjectInput{
+					Bucket: bucket,
+					CopySource: srcKey,
+					Key:    key,
+				},
+			}
+		}
+	}
+}
+
+func (params *Params) submitWriteLoad(op string) {
+	bucket := aws.String(params.bucketName)
+	for i := uint(0); i < params.numSamples; i++ {
+		key := genObjName(params.objectNamePrefix, dataHashBase32, i, -1)
 		if op == opWrite {
 			params.requests <- Req{
 				top: op,
@@ -539,7 +575,16 @@ func (params *Params) submitLoad(op string) {
 					Key:    key,
 				},
 			}
-		} else if op == opRead || op == opValidate {
+		}
+	}
+}
+
+func (params *Params) submitSingleForEach(op string) {
+	bucket := aws.String(params.bucketName)
+	for i := uint(0); i < params.numSamples; i++ {
+		for c := 0; c <= params.copies; c++ {
+			key := genObjName(params.objectNamePrefix, dataHashBase32, i, c - 1)
+			if op == opValidate {
 				params.requests <- Req{
 					top: op,
 					key: *key,
@@ -548,7 +593,45 @@ func (params *Params) submitLoad(op string) {
 						Key:    key,
 					},
 				}
-		} else if op == opHeadObj {
+			} else if op == opPutObjTag {
+				tagSet := make([]*s3.Tag, 0, params.numTags)
+				for iTag := uint(0); iTag < params.numTags; iTag++ {
+					tagName := fmt.Sprintf("%s%d", params.tagNamePrefix, iTag)
+					tagValue := fmt.Sprintf("%s%d", params.tagValPrefix, iTag)
+					tagSet = append(tagSet, &s3.Tag {
+						Key:   &tagName,
+						Value: &tagValue,
+						})
+				}
+				params.requests <- Req{
+					top: op,
+					req: &s3.PutObjectTaggingInput{
+						Bucket: bucket,
+						Key:    key,
+						Tagging: &s3.Tagging{ TagSet: tagSet, },
+					},
+				}
+			}
+		}
+	}
+}
+
+func (params *Params) submitNumForEach(op string) {
+	bucket := aws.String(params.bucketName)
+	totSamples := params.samplesWOcopies(op)
+	for i := uint(0); i < totSamples; i++ {
+		for c := 0; c <= params.copies; c++ {
+			key := genObjName(params.objectNamePrefix, dataHashBase32, i % params.numSamples, c - 1)
+			if op == opRead  {
+				params.requests <- Req{
+					top: op,
+					key: *key,
+					req: &s3.GetObjectInput{
+						Bucket: bucket,
+						Key:    key,
+					},
+				}
+			} else if op == opHeadObj {
 				params.requests <- Req{
 					top: op,
 					key: *key,
@@ -557,35 +640,31 @@ func (params *Params) submitLoad(op string) {
 						Key:    key,
 					},
 				}
-		} else if op == opPutObjTag {
-			tagSet := make([]*s3.Tag, 0, params.numTags)
-			for iTag := uint(0); iTag < params.numTags; iTag++ {
-				tagName := fmt.Sprintf("%s%d", params.tagNamePrefix, iTag)
-				tagValue := fmt.Sprintf("%s%d", params.tagValPrefix, iTag)
-				tagSet = append(tagSet, &s3.Tag {
-						Key:   &tagName,
-						Value: &tagValue,
-						})
+			} else if op == opGetObjTag {
+				params.requests <- Req{
+					top: op,
+					req: &s3.GetObjectTaggingInput{
+						Bucket: bucket,
+						Key:    key,
+					},
+				}
 			}
-			params.requests <- Req{
-				top: op,
-				req: &s3.PutObjectTaggingInput{
-					Bucket: bucket,
-					Key:    key,
-					Tagging: &s3.Tagging{ TagSet: tagSet, },
-				},
-			}
-		} else if op == opGetObjTag {
-			params.requests <- Req{
-				top: op,
-				req: &s3.GetObjectTaggingInput{
-					Bucket: bucket,
-					Key:    key,
-				},
-			}
-		} else {
-			log.Panic("Developer error")
 		}
+	}
+}
+
+// Create an individual load request and submit it to the client queue
+func (params *Params) submitLoad(op string) {
+	if op == opCopyObj {
+		params.submitCopyObj()
+	} else if op == opWrite || op == opMpUpl {
+		params.submitWriteLoad(op)
+	} else if op == opPutObjTag || op == opValidate {
+		params.submitSingleForEach(op)
+	} else if op == opRead || op == opHeadObj || op == opGetObjTag {
+		params.submitNumForEach(op)
+	} else {
+		log.Panic("Developer error")
 	}
 }
 
@@ -735,6 +814,11 @@ func (params *Params) startClient(cfg *aws.Config) {
 			putStartTime = mpInfo[curKey].startTime
 			ttfb = mpInfo[curKey].ttfb
 			numBytes = params.objectSize
+		case *s3.CopyObjectInput:
+			req, _ := svc.CopyObjectRequest(r)
+			err = req.Send()
+			ttfb = time.Since(putStartTime)
+			numBytes = 0
 		default:
 			log.Panic("Developer error")
 		}

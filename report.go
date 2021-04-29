@@ -300,5 +300,6 @@ func (params Params) report() map[string]interface{} {
 	ret["label"] = params.label
 	ret["outstream"] = params.outstream
 	ret["outtype"] = params.outtype
+	ret["copies"] = params.copies
 	return ret
 }

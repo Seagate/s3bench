@@ -18,6 +18,9 @@ const (
 	opPutObjTag = "PutObjTag"
 	opValidate = "Validate"
 	opMpUpl = "MultipartUpload"
+	opCopyObj = "CopyObject"
+	opDelObj = "DeleteObjects"
+	opDelTag = "DeleteTags"
 )
 
 // Req is used to submit reqs
@@ -75,6 +78,7 @@ type Params struct {
 	label                 string
 	outstream             string
 	outtype               string
+	copies                int
 }
 
 // Result repr result of the op
